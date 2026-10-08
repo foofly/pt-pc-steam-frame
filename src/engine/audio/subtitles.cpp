@@ -83,15 +83,14 @@ bool SubtitleTable::Load(Vfs& vfs, std::string_view language, std::span<const st
         return false;
     }
     const int translation_language = lang == "Tur" ? 7 : lang == "Zhs" ? 8 : lang == "Ara" ? 9 : lang == "Rus" ? 10 : lang == "Ukr" ? 11 : 0;
-    if (translation_language) {
+    // the translation pack (subtitles/<code>.txt, tools/subtitle_pack.py); without it the subtitles stay English
+    const auto& translations = localized::SubtitleTranslations(translation_language);
+    if (!translations.empty()) {
         for (SubtitleEntry& entry : entries_) {
             bool found = false;
-            auto translate = [&](const auto& table) {
-                for (const auto& t : table) if (t.key == entry.key && t.lines.size() == entry.lines.size()) {
-                    size_t i=0; for (auto text : t.lines) { auto& line=entry.lines[i++].text; line=text; std::replace(line.begin(),line.end(),'|','\n'); } found = true; break;
-                }
-            };
-            switch(translation_language) {case 7:translate(turkish::kSubtitles);break;case 8:translate(chinese::kSubtitles);break;case 9:translate(arabic::kSubtitles);break;case 10:translate(russian::kSubtitles);break;case 11:translate(ukrainian::kSubtitles);break;}
+            for (const auto& t : translations) if (t.key == entry.key && t.lines.size() == entry.lines.size()) {
+                size_t i=0; for (const auto& text : t.lines) { auto& line=entry.lines[i++].text; line=text; std::replace(line.begin(),line.end(),'|','\n'); } found = true; break;
+            }
             if (!found) { if (error) *error = std::format("{} subtitle {:08x} missing or line count differs", lang, entry.key); return false; }
         }
     }

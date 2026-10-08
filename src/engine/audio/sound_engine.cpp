@@ -1,7 +1,9 @@
 #include "engine/audio/sound_engine.h"
 
+#if !defined(__aarch64__)
 #include <pmmintrin.h>
 #include <xmmintrin.h>
+#endif
 
 #include <algorithm>
 #include <bit>
@@ -21,6 +23,26 @@ constexpr int kMaxPlayDepth = 32;
 constexpr uint16_t kRumbleDevice = 406;
 constexpr float kCenterGain = 0.70710678f;
 constexpr uint64_t kEbootFrame = 1024;
+
+// denormals flushed to zero while mixing: MXCSR FTZ|DAZ (0x8040) on x86, FPCR.FZ (bit 24) on ARM64
+#if defined(__aarch64__)
+using FloatControl = uint64_t;
+FloatControl FlushDenormals() {
+    FloatControl fpcr;
+    asm volatile("mrs %0, fpcr" : "=r"(fpcr));
+    asm volatile("msr fpcr, %0" : : "r"(fpcr | (FloatControl{1} << 24)));
+    return fpcr;
+}
+void RestoreFloatControl(FloatControl fpcr) { asm volatile("msr fpcr, %0" : : "r"(fpcr)); }
+#else
+using FloatControl = unsigned int;
+FloatControl FlushDenormals() {
+    const FloatControl csr = _mm_getcsr();
+    _mm_setcsr(csr | 0x8040);
+    return csr;
+}
+void RestoreFloatControl(FloatControl csr) { _mm_setcsr(csr); }
+#endif
 
 uint64_t MsToSamples(double ms) {
     return ms <= 0.0 ? 0 : static_cast<uint64_t>(std::llround(ms * kSamplesPerMs));
@@ -3501,8 +3523,7 @@ void SoundEngine::Render(float* out, uint32_t frames) {
         motion_levels_.store(0, std::memory_order_relaxed);
         return;
     }
-    const unsigned int csr = _mm_getcsr();
-    _mm_setcsr(csr | 0x8040);
+    const FloatControl float_control = FlushDenormals();
     {
         std::lock_guard lock(command_mutex_);
         command_work_.swap(commands_);
@@ -3555,7 +3576,7 @@ void SoundEngine::Render(float* out, uint32_t frames) {
         stats_.sequencers = static_cast<uint32_t>(sequencers_.size());
         stats_.music = static_cast<uint32_t>(music_.size());
     }
-    _mm_setcsr(csr);
+    RestoreFloatControl(float_control);
 }
 
 }

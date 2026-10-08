@@ -1,0 +1,68 @@
+# The native ARM64 Linux game for the Steam Frame: every pushed v* tag builds it on GitHub's ARM64 runner and attaches it to
+# that tag's release. Run by hand (Actions > Run workflow) it builds the same package as a workflow artifact only.
+# The package has no game data and no subtitle translation packs (tools/subtitle_pack.py); the update check is off, because
+# upstream's release manifest lists only its x86-64 builds.
+name: Steam Frame release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  linux-arm64:
+    runs-on: ubuntu-24.04-arm
+    # Debian trixie like docs/linux.md's sysroot: the game needs glibc 2.38 or newer
+    container: debian:trixie
+    steps:
+      - name: Install build dependencies
+        run: |
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq build-essential cmake ninja-build git file binutils ca-certificates \
+            glslc libvulkan-dev libx11-dev libxext-dev libxrandr-dev libxrender-dev libxcursor-dev libxi-dev libxfixes-dev libxss-dev \
+            libxtst-dev libxkbcommon-dev libwayland-dev wayland-protocols libdecor-0-dev libasound2-dev libpulse-dev \
+            libpipewire-0.3-dev libdbus-1-dev libudev-dev libdrm-dev libgbm-dev libegl-dev libgl-dev libgles-dev libusb-1.0-0-dev
+
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          VERSION="${GITHUB_REF_NAME#v}"
+          [ "$GITHUB_REF_TYPE" = tag ] || VERSION=""
+          cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DPT_OPENXR=ON \
+            -DPT_UPDATE_MANIFEST_URL_OVERRIDE=https://updates.invalid/latest.json ${VERSION:+-DPT_VERSION_OVERRIDE=$VERSION}
+
+      - name: Build
+        run: cmake --build build --target pt --parallel "$(nproc)"
+
+      - name: Package
+        run: |
+          NAME="pt-steamframe-${GITHUB_REF_NAME}-linux-arm64"
+          OUT="dist/$NAME"
+          mkdir -p "$OUT/shaders"
+          cp -a build/pt build/libopenxr_loader.so.1 build/fonts build/voice build/licenses "$OUT/"
+          cp build/shaders/*.spv "$OUT/shaders/"
+          strip --strip-debug "$OUT/pt" "$OUT/libopenxr_loader.so.1"
+          file "$OUT/pt" "$OUT/libopenxr_loader.so.1"
+          tar -C dist -czf "dist/$NAME.tar.gz" "$NAME"
+          echo "NAME=$NAME" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.NAME }}
+          path: dist/${{ env.NAME }}.tar.gz
+
+      - name: Release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/${{ env.NAME }}.tar.gz
+          body: |
+            Native ARM64 Linux build for the Steam Frame (flat and the experimental VR mode through SteamVR's OpenXR runtime).
+
+            Unpack it, put your extracted `CUSA01127` folder (made by the upstream installer from your own copy of P.T.) next to
+            `pt`, and add `pt` to Steam as a non-Steam game with "Add to VR Library" for VR. No game data is included.

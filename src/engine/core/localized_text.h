@@ -10,6 +10,7 @@
 #include "engine/core/japanese_text.h"
 #include "engine/core/italian_text.h"
 #include "engine/core/portuguese_text.h"
+#include "engine/core/subtitle_translations.h"
 #include <string>
 namespace pt::localized {
 inline std::string_view Menu(std::string_view key, int language) {
@@ -17,8 +18,8 @@ inline std::string_view Menu(std::string_view key, int language) {
 }
 inline std::string Characters(int language) {
  std::string out;for(int c=32;c<127;++c) out.push_back(char(c));
- auto add=[&](const auto& menu,const auto& subtitles){for(const auto& e:menu) out+=e.text;for(const auto& e:subtitles)for(auto line:e.lines) out+=line;};
- switch(language){case 7:add(turkish::kMenu,turkish::kSubtitles);break;case 8:add(chinese::kMenu,chinese::kSubtitles);break;case 9:add(arabic::kMenu,arabic::kSubtitles);break;case 10:add(russian::kMenu,russian::kSubtitles);break;case 11:add(ukrainian::kMenu,ukrainian::kSubtitles);break;}
+ auto add=[&](const auto& menu){for(const auto& e:menu) out+=e.text;for(const auto& e:SubtitleTranslations(language))for(const auto& line:e.lines) out+=line;};
+ switch(language){case 7:add(turkish::kMenu);break;case 8:add(chinese::kMenu);break;case 9:add(arabic::kMenu);break;case 10:add(russian::kMenu);break;case 11:add(ukrainian::kMenu);break;}
  if (language == 10 || language == 11) {
   auto utf8 = [&](uint32_t c) { out.push_back(char(0xC0 | (c >> 6))); out.push_back(char(0x80 | (c & 0x3F))); };
   for (uint32_t c = 0x0400; c <= 0x045F; ++c) utf8(c);

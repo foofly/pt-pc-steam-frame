@@ -28,7 +28,9 @@ int main(int argc, char** argv) {
    if(e.text.find("{accept}")!=std::string_view::npos&&value.find("{accept}")==std::string_view::npos)++failures;
   }
   size_t lines=0;
-  for(const auto& e:english.Entries()){auto* t=translated.FindByKey(e.key);
+  // the subtitles are compared only with the language's translation pack (tools/subtitle_pack.py); without it they stay English
+  if(pt::localized::SubtitleTranslations(lang).empty())printf("SKIP: subtitles %s, no translation pack\n",codes[lang-7]);
+  else for(const auto& e:english.Entries()){auto* t=translated.FindByKey(e.key);
    if(!t||t->lines.size()!=e.lines.size()||t->range!=e.range||t->category!=e.category){++failures;continue;}
    for(size_t i=0;i<t->lines.size();++i){const auto& a=e.lines[i];const auto& b=t->lines[i];
     if(b.text.empty()||a.start_seconds!=b.start_seconds||a.end_seconds!=b.end_seconds)++failures;if(b.text.find('|')!=std::string::npos || std::count(a.text.begin(),a.text.end(),'\n')!=std::count(b.text.begin(),b.text.end(),'\n')) {printf("FAIL: subtitle line breaks %d key %08x line %zu expected %d actual %d\n",lang,e.key,i,int(std::count(a.text.begin(),a.text.end(),'\n')),int(std::count(b.text.begin(),b.text.end(),'\n')));++failures;}check(b.text);++lines;

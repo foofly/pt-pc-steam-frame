@@ -1,136 +1,199 @@
-# P.T. for PC
+# P.T. for Steam Frame
 
-![Lisa in the hallway](docs/media/lisa.gif)
+A fork of [LoreanXavier/pt-pc](https://github.com/LoreanXavier/pt-pc), the native PC port of P.T. (the 2014 PS4 teaser
+by Kojima Productions), built as a native ARM64 Linux program for the Steam Frame. It runs standalone on the headset,
+flat or in the port's VR mode through SteamVR's OpenXR runtime: no PC, no streaming, no x86 emulation.
 
-If the port is worth something to you, you can support me on Patreon: [patreon.com/loreanxavier](https://patreon.com/loreanxavier). It keeps the testing hardware and the releases coming.
+The port itself, its game logic, renderer, tools and documentation, is LoreanXavier's work. If it is worth something to
+you, support them on Patreon: [patreon.com/loreanxavier](https://patreon.com/loreanxavier). This fork only adds what the
+ARM64 and Steam Frame build needs (see [Changes from upstream](#changes-from-upstream)).
 
-This is a native PC port of P.T., the 2014 PS4 teaser by Kojima Productions. It is not an emulator. The game logic was
-rebuilt in C++ from the original's behaviour and the renderer is written on Vulkan; every level, model, texture, sound,
-script and cutscene is read at run time from your own copy of the PS4 game. There is no game data in this repository
-and none in the installer.
-
-I made this on my own, in my spare time, because P.T. deserved to keep existing somewhere other than on consoles that
-still have it installed. It plays the whole teaser from the first wake-up to the street, with the voice part included.
+There is no game data in this repository or in its releases. Every level, model, texture, sound, script and cutscene is
+read at run time from your own copy of the PS4 game.
 
 ## What you need
 
-- Your own copy of P.T. The port is built and tested with the US release, CUSA01127, as a dump folder from your console
-  or a fake PKG made from that dump. The European and Japanese releases install too, with a note, but I have not seen
-  their data myself. A store PKG cannot be used: it is encrypted for the console that owns it, and nothing here
-  decrypts it.
-- Windows 10 or 11 (x64), or Linux x86-64 with glibc 2.38 or newer (Ubuntu 24.04, Debian 13, Fedora 39, current Arch
-  and SteamOS).
-- A GPU and driver with Vulkan 1.3. The optional ray-traced shadows, ambient occlusion and reflections need a GPU with
-  Vulkan ray queries. DLSS needs a GeForce RTX card; FSR and XeSS run on any recent GPU. The settings page greys out
-  what your machine cannot run and says why.
-- A microphone for one part of the game, as on the PS4. If you have none, `key = J` under `[voice]` in `pt.ini` lets a
-  key stand in for the spoken word.
+- Your own copy of P.T. as a dump folder from your console or a fake PKG made from that dump. The port is tested with
+  the US release, CUSA01127. A PlayStation Store PKG cannot be used: it is encrypted for the console that owns it, and
+  nothing here decrypts it.
+- A Steam Frame.
+- An x86-64 Linux PC for one step: unpacking the game files from the PKG. The extraction helper only exists for x86-64.
+- For VR: SteamVR on the Frame (it provides the OpenXR runtime).
 
-## Installing
+## Installing on the Steam Frame
 
-Download the installer from the Releases page: `P.T.PC.Port.Setup.exe` on Windows, the Linux setup binary on Linux.
-Point it at your dump folder or fake PKG and at a destination folder (the default on Windows is
-`%LocalAppData%\Programs\P.T. PC Port`). It copies the three game archives it needs (`chunk1.psarc`,
-`texture.qar`, `pathid_list_ps4.bin`) next to the port and makes a shortcut if you want one. The eboot, modules and
-system files are not used.
+### 1. Unpack the game files (on the PC)
 
-Linux: `chmod +x` the setup and run it from a terminal. The game needs only glibc and the system's Vulkan driver. On a Steam Deck
-install from desktop mode and add `pt` as a non-Steam game; it runs on SteamOS as it is.
+1. Download the upstream Linux setup `P.T.PC.Port.Setup-linux` from the
+   [upstream Releases page](https://github.com/LoreanXavier/pt-pc/releases). It holds the extraction helper.
+2. Download `pt-steamframe-<version>-linux-arm64.tar.gz` from this fork's Releases page and unpack it:
 
-There is also a portable zip on the Releases page if you prefer to put the game files in place yourself: unpack it,
-then start `pt.exe --game <your CUSA01127 folder>` once, or put the folder next to the executable as `game/CUSA01127`.
+       tar xzf pt-steamframe-<version>-linux-arm64.tar.gz
 
-Settings go to `%APPDATA%\pt-port\pt\pt.ini` on Windows and `~/.local/share/pt-port/pt/` on Linux, together with the
-save, the log (`pt.log`) and crash dumps. The game checks the Releases page for a newer version once at start; `[network]
-check_updates = 0` turns that off.
+3. Put the game files next to `pt` with `tools/prepare_game.py` from this repository (Python 3, nothing to install):
 
-## Playing
+       python3 tools/prepare_game.py <your P.T. pkg or dump folder> pt-steamframe-<version>-linux-arm64 \
+           --setup <path to P.T.PC.Port.Setup-linux>
 
-Mouse and WASD, right mouse button to zoom, left button, Enter or E to interact, Esc for the pause menu, Alt+Enter for
-fullscreen, F10 for the PC settings. Any gamepad works as the PS4 pad; the button prompts follow whatever you used
-last (keyboard, PlayStation, Xbox or Switch). Vibration follows the original's patterns. The in-game options
-(brightness, subtitles, camera inversion) are the original ones, and as on the PS4 the option screen and the preface
-only play on a first start.
+   The PKG can have any file name and the target folder may already exist. The script writes only `CUSA01127/`
+   (`chunk1.psarc`, `texture.qar`, `pathid_list_ps4.bin`, `source.txt`, about 1.3 GB) into the folder with `pt`, where
+   the game finds it by itself. If you have installed the upstream port before, `--extractor
+   <install folder>/extractor/PT.PkgExtract` uses that install's helper instead of the setup. A folder that already holds
+   the extracted archives is copied as it is.
 
-## What the port adds
+### 2. Copy the folder to the Frame
 
-Everything below is off or set to the original's behaviour by default. The PS4 look is the baseline; the extras are
-there if you want them.
+Over SSH (enable it on the Frame in Desktop Mode first):
 
-Display and image
-- Window, borderless or fullscreen, any resolution, v-sync on or off.
-- Upscalers: AMD FSR 3.1, NVIDIA DLSS 4.5 (with a choice of model) and Intel XeSS, in the usual quality steps or a
-  custom scale, plus native-resolution anti-aliasing (FSR native AA, DLAA).
-- Frame generation: AMD FSR 3 on Radeon RX 5000 or newer, NVIDIA DLSS Frame Generation on RTX 40 or newer.
-- Graphics presets Low, Medium, Original (PS4), High, Ultra and Custom. The individual controls cover shadow map size,
-  ray-traced shadows (sharp like the original or soft), contact shadows, ray-traced ambient occlusion, ray-traced floor
-  reflections, anisotropic filtering, enhanced textures (2x upscaled once from your own files with Real-ESRGAN, cached
-  on disk), film grain, motion blur, depth of field, the original's lens flare ghosts and the curved lens with colour
-  fringing. Each one can go back to the PS4 setting on its own.
+    rsync -av --progress pt-steamframe-<version>-linux-arm64/ <user>@<frame>:~/Games/pt-steamframe/
 
-Extras
-- Photo mode (F7): pause, fly the camera, set field of view, roll, aperture and the flashlight, save to Pictures/PT
-  Photos.
-- Free camera (F6).
-- Loop browser: jump to any loop of the house once you have finished the game.
-- Museum: the game's subliminal images, radio and voice lines with transcripts, photo pieces, cutscenes, models and
-  unused content, as you reach them in play.
-- Game+: the content a finished game unlocks.
-- Speedrun timer with a split at every loop, real time and game time, personal bests, and a LiveSplit server
-  connection (Control > Start TCP Server in LiveSplit).
-- Third person view (experimental).
-- VR through OpenXR (experimental: I have no headset, so it has only run against a simulated runtime). See
-  docs/vr.md before trying it.
+`prepare_game.py ... --to <user>@<frame>:~/Games/pt-steamframe/` does the same for `CUSA01127/` alone, if you copied the
+release some other way. A USB stick or a network share works too. On the Frame the folder should look like:
 
-Languages
-- The original's English, French, German, Spanish, Italian, Portuguese and Japanese, plus Turkish, Simplified Chinese,
-  Arabic, Russian and Ukrainian added by the port: menus, the PC settings and all subtitle lines. Voice audio stays the
-  original English, and the word the microphone listens for is always "Jack".
+    ~/Games/pt-steamframe/
+      pt
+      libopenxr_loader.so.1
+      shaders/  fonts/  voice/  licenses/
+      CUSA01127/
 
-Mods
-- A `mods` folder next to the executable can replace game files, textures and sounds, and run Lua scripts that react
-  to game events. See docs/modding.md and docs/lua_api.md.
+### 3. Add it to Steam
+
+1. In Desktop Mode, open Steam: Games > Add a Non-Steam Game to My Library, browse to `~/Games/pt-steamframe/pt`.
+2. In the game's Properties, turn on **Add to VR Library**. Without it the game does not get SteamVR's runtime and starts
+   flat.
+3. For VR, put `--vr` in its Launch Options (or set `enabled = 1` under `[vr]` in `pt.ini`, or turn on PC settings >
+   Extras > VR mode and restart). Without it the game starts flat.
+
+To check it from a terminal first: `cd ~/Games/pt-steamframe && chmod +x pt && ./pt`.
+
+### 4. First start and `pt.ini`
+
+Start the game once and quit: the first start writes `~/.local/share/pt-port/pt/pt.ini` with every setting at its
+default, next to the save and the log (`pt.log`). Then edit `pt.ini` (in Desktop Mode, with any text editor, or
+`nano ~/.local/share/pt-port/pt/pt.ini` in a terminal) while the game is closed:
+
+    [voice]
+    ; one part of the game waits for a spoken word, and voice recognition does not work on ARM64 yet (Caveats):
+    ; this key stands in for it
+    key = "J"
+
+    [vr]
+    ; 1 starts in VR every time, the same as --vr in the Launch Options
+    enabled = 1
+    ; the eye images against SteamVR's recommended size, 0.5 to 2: above 1 sharpens and smooths edges, costs frame rate
+    resolution_scale = 1.0
+
+The rest of `[vr]` (`turn` snap or smooth, `snap_degrees`, `smooth_speed`, `flashlight` on the head or a controller,
+`flashlight_hand`) is described in the file and in [docs/vr.md](docs/vr.md); the Extras > VR page of the in-game PC
+settings changes the flashlight and turning while playing.
+
+The graphics preset is not in `pt.ini` as one value: pick Low or Original (PS4) in the in-game PC settings > Graphics,
+with ray tracing off, and raise things while the frame rate holds.
+
+`grep vr: ~/.local/share/pt-port/pt/pt.log` shows what the VR mode did, and why when it fell back to flat;
+`vr: eyes drawn at ...` gives the per-eye resolution.
+
+### Translated subtitles (optional)
+
+The subtitles the port added for Turkish, Simplified Chinese, Arabic, Russian and Ukrainian translate the game's
+script, so this fork does not carry them. With a checkout of the upstream repository:
+
+    python3 tools/subtitle_pack.py <upstream pt-pc checkout> ~/Games/pt-steamframe
+
+writes them to `subtitles/` next to `pt`. Without them those languages show the English subtitles; the menus stay
+translated. The original's seven languages (English, French, German, Spanish, Italian, Portuguese, Japanese) come from
+your game files and need nothing.
+
+## Caveats so far
+
+This is early. Flat and VR both start and play on the Frame, but little more has been checked on the device.
+
+VR
+- The VR mode is the upstream port's experimental mode, written against a simulated headset. This fork is, as far as
+  I know, the first time it has run on real hardware. Expect rough edges, and read [docs/vr.md](docs/vr.md).
+- Image quality is low. Each eye is drawn at SteamVR's recommended size times `resolution_scale`, and the only
+  anti-aliasing is the original game's FXAA, so edges shimmer when you move your head. Raising `resolution_scale`
+  above 1 (for example 1.3) is the only remedy for now and costs frame rate. There is no temporal anti-aliasing,
+  foveated rendering or space warp yet.
+- Each eye is a full render with its own shadows, reflections and post-processing, about four times the work of the
+  flat game, on a mobile GPU. Ray tracing and the higher presets are not realistic in VR.
+- The controllers go through SteamVR's mapping of the Index and Touch bindings; the port has no Steam Frame controller
+  profile. The comfort settings (eye height, turn speed, HUD distance) were chosen without tests with people.
+- Cutscenes and the peephole play on a flat virtual screen, by design (docs/vr.md).
+
+Missing on ARM64
+- **Voice recognition does not work yet**: no ARM build of whisper's CPU code is shipped, so the game cannot hear the
+  word it waits for in one part of the game. Put `key = "J"` under `[voice]` in `pt.ini` (step 4) and the J key stands in for it.
+- **Enhanced textures do not work**: the Real-ESRGAN tool the port uses only exists for x86-64.
+- **No upscalers or frame generation**: FSR, DLSS and XeSS are Windows-only SDKs (also on the upstream Linux build),
+  and the VR mode turns them off anyway.
+
+Other
+- The update check is off in this fork's builds (upstream's update manifest lists only its own x86-64 releases). Check
+  this fork's Releases page by hand.
+- Unpacking the PKG needs an x86-64 Linux PC; it cannot be done on the Frame.
+- The game needs glibc 2.38 or newer (it is built on Debian 13). Current SteamOS has that.
+
+If something goes wrong, an issue with your `pt.log` (and the `vr:` lines) helps.
 
 ## Building from source
 
-Windows: Visual Studio 2022 Build Tools, LLVM (clang-cl), the Vulkan SDK, CMake 3.28 and Ninja. Then
+The release build is `.github/workflows/steam-frame-release.yml`: GitHub's ARM64 runner, a Debian trixie container,
+`cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DPT_OPENXR=ON`, then `cmake --build build --target pt`.
+Every pushed `v*` tag builds the release archive and attaches it to that tag's release; Run workflow on the Actions
+tab builds it as an artifact only.
 
-    tools\build_pt.bat release
+The same build runs on an x86-64 Linux PC under emulation (slower: the first build takes a while). With podman and
+`qemu-user-static` set up for aarch64:
 
-gives `build\release\pt.exe`. CMake fetches the dependencies (SDL3, zlib, volk, VMA, glm, Dear ImGui, stb, Lua 5.1,
-libogg, libvorbis, whisper.cpp) and downloads the Whisper and Silero models and the upscaler SDK files, each checked by
-SHA-256. A failed SDK download leaves that upscaler out; `-DPT_UPSCALERS=OFF` builds without any. `python
-tools\package.py` turns the build into the portable folder and zip.
+    podman run --rm -it --arch arm64 -v "$PWD":/src:Z docker.io/library/debian:trixie bash
+    # inside the container:
+    apt-get update && apt-get install -y build-essential cmake ninja-build git ca-certificates glslc libvulkan-dev \
+      libx11-dev libxext-dev libxrandr-dev libxrender-dev libxcursor-dev libxi-dev libxfixes-dev libxss-dev libxtst-dev \
+      libxkbcommon-dev libwayland-dev wayland-protocols libdecor-0-dev libasound2-dev libpulse-dev libpipewire-0.3-dev \
+      libdbus-1-dev libudev-dev libdrm-dev libgbm-dev libegl-dev libgl-dev libgles-dev libusb-1.0-0-dev
+    cmake -G Ninja -S /src -B /src/build/linux-arm64 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DPT_OPENXR=ON
+    cmake --build /src/build/linux-arm64 --target pt
 
-Linux: `cmake -G Ninja -B build/linux -DCMAKE_BUILD_TYPE=RelWithDebInfo && cmake --build build/linux --target pt`.
-GCC 13 or clang 17, the Vulkan headers and `glslc`. The upscalers are Windows-only SDKs and are left out there.
-`tools/linux/` has the cross build I use from Windows. More in docs/linux.md.
+`file build/linux-arm64/pt` should say `ARM aarch64`. The folder to copy to the Frame is `pt`, `libopenxr_loader.so.1`,
+`shaders/*.spv`, `fonts/`, `voice/` and `licenses/` from the build folder.
 
-The unit tests are CMake targets (`pt_tests`, `pt_mods_test` and the others in CMakeLists.txt). `python
-tools/walkthrough.py --exe build/release/pt.exe --game <folder>` plays the whole game without a window through the
-scripted routes in `tests/walkthrough/` and checks the log; it is how I make sure a change did not break a loop.
+Windows and x86-64 Linux build as upstream describes: see the
+[upstream README](https://github.com/LoreanXavier/pt-pc#building-from-source) and [docs/linux.md](docs/linux.md).
 
-The installer is `installer/`: a native C++ setup (`pt_setup`, built when a payload exists) and a small LGPL extraction
-helper in C# that reads fake PKGs with LibOrbisPkg. docs/installer.md describes how it decides what it accepts.
+## Changes from upstream
 
-Other docs: docs/upscaling.md, docs/vr.md, docs/updates.md, and the file format notes in docs/formats/ that came out of
-reverse engineering the game data, with the tools in tools/ that read those formats.
+- ARM64: the audio mixer's flush-to-zero setting has an ARM64 path (`src/engine/audio/sound_engine.cpp`); it was
+  x86-only.
+- VR on Linux: `cmake/OpenXR.cmake` builds the Khronos OpenXR loader 1.1.63 from source on Linux, ships it next to `pt`
+  as `libopenxr_loader.so.1` (found through the executable's `$ORIGIN` RUNPATH) and fixes the headless test runtime's
+  manifest. `-DPT_OPENXR=ON` turns it on; Windows is unchanged.
+- Arabic on Linux: the font lookup now knows the bundled Noto Kufi and Noto Naskh Arabic fonts; the Arabic interface
+  failed to load on every Linux build before.
+- No copyrighted material: the added languages' translated subtitles moved out of the source into optional packs
+  (`tools/subtitle_pack.py`, `src/engine/core/subtitle_translations.cpp`), and the README's gameplay GIF is gone.
+- `tools/prepare_game.py`: unpacks the game files from a PKG or dump into the folder with `pt`, with the upstream
+  extraction helper or Linux setup.
+- The GitHub Actions release workflow.
+
+Everything else (the features, the settings, the mods, the Museum, the speedrun timer, the PC controls) is the upstream
+port's; its README and docs/ describe them.
 
 ## Thanks
 
-P.T. is the work of Kojima Productions and is owned by Konami. This project is not affiliated with, endorsed by or
-connected to either of them. It contains none of their assets and does nothing without your own copy of the game.
+P.T. is the work of Kojima Productions and is owned by Konami. Neither this fork nor the upstream port is affiliated
+with, endorsed by or connected to either of them. They contain none of their assets and do nothing without your own
+copy of the game.
 
-The shadPS4 emulator was my reference for how the original behaves on the PS4 and for checking the port's frames
-against it. Thanks to its developers.
+The port is LoreanXavier's ([pt-pc](https://github.com/LoreanXavier/pt-pc)). As they write, the shadPS4 emulator was
+their reference for how the original behaves on the PS4.
 
 The port is built on SDL3, Vulkan (volk, VMA), glm, Dear ImGui, stb, Lua 5.1, libogg and libvorbis, whisper.cpp with
-OpenAI's Whisper model and the Silero VAD for the voice part, Real-ESRGAN with ncnn for the enhanced textures, AMD
-FidelityFX, NVIDIA DLSS and Intel XeSS for the upscalers, the Khronos OpenXR loader for VR, HarfBuzz on Linux and the
-Noto fonts for the added languages, and LibOrbisPkg in the installer. Their notices ship in `licenses/` next to the
-executable.
+OpenAI's Whisper model and the Silero VAD for the voice part, Real-ESRGAN with ncnn for the enhanced textures, the
+Khronos OpenXR loader for VR, HarfBuzz on Linux and the Noto fonts for the added languages, and LibOrbisPkg in the
+upstream installer's extraction helper. Their notices ship in `licenses/` next to the executable.
 
 ## License
 
-The port's own code is under the MIT license (see LICENSE). The third-party pieces listed above keep their own
-licenses.
+The port's own code is under the MIT license (see LICENSE, copyright LoreanXavier); this fork's changes are under the
+same license. The third-party pieces listed above keep their own licenses.
