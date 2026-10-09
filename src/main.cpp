@@ -4355,8 +4355,8 @@ int RunGame(App& app, pt::Vfs& vfs) {
                 app.renderer.SetRenderExtent(stereo.render);
                 scene_builder.Build(game, stereo.head, scene_dt, lighting, light_blend);
                 last_scene_time = game.Time();
-                vfx_scene.Prepare(game, stereo.head, static_cast<float>(stereo.render.width) / static_cast<float>(std::max(1u, stereo.render.height)),
-                                  lighting, vfx_pass, blend);
+                // the head camera's frustum around both eyes, not one eye's image
+                vfx_scene.Prepare(game, stereo.head, stereo.head.aspect_override, lighting, vfx_pass, blend);
                 for (int eye = 0; eye < 2; ++eye) {
                     if (!begin(eye == 0)) {
                         continue;
@@ -4876,6 +4876,8 @@ int main(int argc, char** argv) {
         if (app.xr->Init("P.T. (pt-port)")) {
             app.renderer.Context().creator = app.xr.get();
             settings.vsync = false;
+            // foveated rendering (docs/vr.md): the device gets VK_EXT_fragment_density_map when it has it
+            app.renderer.Context().want_fragment_density_map = app.settings.vr.foveation > 0;
         } else {
             pt::LogWarn("vr: off for this run: {}", app.xr->Error());
             app.xr.reset();
@@ -4899,6 +4901,7 @@ int main(int argc, char** argv) {
         app.renderer.Context().CheckDeviceLost(VK_ERROR_DEVICE_LOST, "PT_TEST_CRASH");
     }
     if (renderer_ready && app.textures.Init(app.renderer.Context()) && app.scene.Init(app.renderer, app.textures)) {
+        if (app.xr) app.scene.SetVrFoveation(app.renderer.Context().fragment_density_map ? app.settings.vr.foveation : 0);
         app.textures.SetAnisotropy(AnisotropyFromApp(app.settings));
         app.vfs = &vfs;
         app.texture_runtime = pt::ExecutableDir() / "texture-tools";

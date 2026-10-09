@@ -154,6 +154,7 @@ bool LoadAppSettings(const std::filesystem::path& path, AppSettings& out) {
     Read(v, "vr.resolution_scale", out.vr.resolution_scale);
     Read(v, "vr.height_offset", out.vr.height_offset);
     Read(v, "vr.world_scale", out.vr.world_scale);
+    Read(v, "vr.foveation", out.vr.foveation);
     {
         std::string reached;
         Read(v, "progress.loops_reached", reached);
@@ -205,6 +206,7 @@ bool LoadAppSettings(const std::filesystem::path& path, AppSettings& out) {
     out.vr.flashlight = std::clamp(out.vr.flashlight, 0, 1);
     out.vr.flashlight_hand = std::clamp(out.vr.flashlight_hand, 0, 1);
     out.vr.turn = std::clamp(out.vr.turn, 0, 1);
+    out.vr.foveation = std::clamp(out.vr.foveation, 0, 2);
     out.vr.snap_degrees = std::isfinite(out.vr.snap_degrees) ? std::clamp(out.vr.snap_degrees, 10.0f, 90.0f) : 30.0f;
     out.vr.smooth_speed = std::isfinite(out.vr.smooth_speed) ? std::clamp(out.vr.smooth_speed, 20.0f, 360.0f) : 90.0f;
     out.vr.resolution_scale = std::isfinite(out.vr.resolution_scale) ? std::clamp(out.vr.resolution_scale, 0.5f, 2.0f) : 1.0f;
@@ -319,7 +321,10 @@ bool SaveAppSettings(const std::filesystem::path& path, const AppSettings& s) {
          << "; the eye images' size against the headset's recommendation (0.5 to 2)\n"
          << "resolution_scale = " << s.vr.resolution_scale << "\n"
          << "height_offset = " << s.vr.height_offset << "\n"
-         << "world_scale = " << s.vr.world_scale << "\n";
+         << "world_scale = " << s.vr.world_scale << "\n"
+         << "; foveated rendering on devices with VK_EXT_fragment_density_map: the lighting and compose passes shade the edges of\n"
+         << "; each eye's image at a lower density (0 off, 1 light, 2 strong); applies at the next start\n"
+         << "foveation = " << s.vr.foveation << "\n";
     text << "\n[progress]\n"
          << "; the loop browser's unlocks (release builds): the entries reached in play (hex bits) and the game finished once\n"
          << "loops_reached = " << std::hex << s.progress.loops_reached << std::dec << "\n"

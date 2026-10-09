@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 
 #include "engine/core/log.h"
 #include "engine/physics/collision_world.h"
@@ -150,15 +151,27 @@ bool VrPlay::PrepareStereo(Game& game, const Camera& logic, float dt, bool menu_
         return false;
     }
     const glm::vec4 tangents[2] = {host_.Eye(0).tangents, host_.Eye(1).tangents};
+    // PT_VR_UNION_FRUSTUM=1 draws both eyes with the one symmetric frustum around both, as before 1.0.2-frame2 (for comparing)
+    static const bool union_frustum = [] {
+        const char* v = std::getenv("PT_VR_UNION_FRUSTUM");
+        return v && *v == '1';
+    }();
     if (render_size_.x == 0) {
         const VkExtent2D swapchain = host_.EyeExtent();
-        render_size_ = xr::StereoRenderSize(tangents, glm::uvec2(swapchain.width, swapchain.height));
-        LogInfo("vr: eyes drawn at {}x{} for {}x{} images (fields L {:.1f} R {:.1f} U {:.1f} D {:.1f} degrees, left eye)", render_size_.x,
-                render_size_.y, swapchain.width, swapchain.height, glm::degrees(host_.Eye(0).angles.x), glm::degrees(host_.Eye(0).angles.y),
-                glm::degrees(host_.Eye(0).angles.z), glm::degrees(host_.Eye(0).angles.w));
+        // each eye its own off-axis frustum at the swapchain's size (xr::OwnEyeFrustum); the frustum around both eyes only
+        // for the head camera that builds the scene
+        render_size_ = glm::uvec2(swapchain.width, swapchain.height);
+        head_size_ = xr::StereoRenderSize(tangents, render_size_);
+        if (union_frustum) render_size_ = head_size_;
+        LogInfo("vr: eyes drawn at {}x{} for {}x{} images, each eye's own frustum (fields L {:.1f} R {:.1f} U {:.1f} D {:.1f} degrees, "
+                "left eye; {}x{} for one frustum around both)",
+                render_size_.x, render_size_.y, swapchain.width, swapchain.height, glm::degrees(host_.Eye(0).angles.x),
+                glm::degrees(host_.Eye(0).angles.y), glm::degrees(host_.Eye(0).angles.z), glm::degrees(host_.Eye(0).angles.w), head_size_.x,
+                head_size_.y);
     }
+    head_frustum_ = xr::FrustumFor(tangents[0], head_size_, tangents);
     for (int i = 0; i < 2; ++i) {
-        frusta_[i] = xr::FrustumFor(tangents[i], render_size_, tangents);
+        frusta_[i] = union_frustum ? xr::FrustumFor(tangents[i], head_size_, tangents) : xr::OwnEyeFrustum(tangents[i]);
     }
     const Player& player = game.GetPlayer();
     const glm::vec3 feet = player.Feet();
@@ -187,7 +200,7 @@ bool VrPlay::PrepareStereo(Game& game, const Camera& logic, float dt, bool menu_
     const glm::vec3 correction = kept - offset;
     last_anchor_ = anchor;
     last_correction_ = correction;
-    out.head = xr::EyeCamera(anchor + kept, rig_.ToWorld(head.orientation), frusta_[0], kNearPlane);
+    out.head = xr::EyeCamera(anchor + kept, rig_.ToWorld(head.orientation), head_frustum_, kNearPlane);
     for (int i = 0; i < 2; ++i) {
         const xr::ViewPose& pose = host_.Eye(i);
         out.poses[i] = pose;

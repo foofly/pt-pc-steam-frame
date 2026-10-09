@@ -97,6 +97,36 @@ int main() {
     Expect(corner_error < 1.0e-4f, "crop corners", corner_error);
     std::printf("crop corners: worst %.2e uv\n", corner_error);
 
+    // each eye's own off-axis frustum (the Steam Frame's left eye, then mirrored): its field's corners are the image's
+    // corners, and the shaders' reconstruction (PixelNdc minus the jitter that carries the offset, times projection_param)
+    // gives the direction back
+    const glm::vec4 frame_left(std::tan(glm::radians(-59.0f)), std::tan(glm::radians(50.5f)), std::tan(glm::radians(49.6f)),
+                               std::tan(glm::radians(-59.8f)));
+    const glm::vec4 own_eyes[3] = {frame_left, glm::vec4(-frame_left.y, -frame_left.x, frame_left.z, frame_left.w), left_eye};
+    float own_corner_error = 0.0f;
+    float own_reconstruct_error = 0.0f;
+    for (const glm::vec4& t : own_eyes) {
+        const pt::xr::EyeFrustum f = pt::xr::OwnEyeFrustum(t);
+        const pt::Camera c = pt::xr::EyeCamera(glm::vec3(0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f), f, 0.05f);
+        const glm::mat4 projection = c.Projection(1.0f);
+        const glm::vec2 corners[4] = {{t.x, t.z}, {t.y, t.z}, {t.x, t.w}, {t.y, t.w}};
+        const glm::vec2 expected[4] = {{-1.0f, -1.0f}, {1.0f, -1.0f}, {-1.0f, 1.0f}, {1.0f, 1.0f}};
+        for (int k = 0; k < 4; ++k) {
+            const glm::vec4 clip = projection * c.View() * glm::vec4(corners[k].x, corners[k].y, -1.0f, 1.0f);
+            const glm::vec2 ndc = glm::vec2(clip) / clip.w;
+            own_corner_error = std::max({own_corner_error, std::abs(ndc.x - expected[k].x), std::abs(ndc.y - expected[k].y)});
+            // the shader side: ViewPosition(PixelNdc) with jitter = the offset, projection_param = (1 / p00, 1 / p11)
+            const glm::vec2 view_xy = (ndc - f.offset) * glm::vec2(1.0f / projection[0][0], 1.0f / projection[1][1]);
+            own_reconstruct_error = std::max({own_reconstruct_error, std::abs(view_xy.x - corners[k].x), std::abs(view_xy.y - corners[k].y)});
+        }
+    }
+    Expect(own_corner_error < 1.0e-4f, "own eye frustum corners", own_corner_error);
+    Expect(own_reconstruct_error < 1.0e-4f, "own eye frustum reconstruction", own_reconstruct_error);
+    std::printf("own eye frustum: corners worst %.2e ndc, reconstruction worst %.2e\n", own_corner_error, own_reconstruct_error);
+    const glm::uvec2 frame_union = pt::xr::StereoRenderSize(own_eyes, glm::uvec2(1728, 1728));
+    std::printf("Steam Frame fields: %ux%u around both eyes against 1728x1728 for each eye's own (%.0f%% more pixels)\n", frame_union.x,
+                frame_union.y, 100.0 * (double(frame_union.x) * frame_union.y / (1728.0 * 1728.0) - 1.0));
+
     pt::xr::Rig rig;
     const glm::quat head = glm::angleAxis(0.4f, glm::vec3(0, 1, 0)) * glm::angleAxis(-0.2f, glm::vec3(1, 0, 0));
     const glm::vec3 head_position(0.1f, 0.05f, -0.2f);

@@ -65,7 +65,8 @@ void SetViewport(VkCommandBuffer cmd, VkRect2D area) {
     vkCmdSetScissor(cmd, 0, 1, &area);
 }
 
-void BeginPass(VkCommandBuffer cmd, VkRect2D area, std::span<const ColorOutput> colors, RenderTarget* depth, bool depth_read_only, bool clear_depth) {
+void BeginPass(VkCommandBuffer cmd, VkRect2D area, std::span<const ColorOutput> colors, RenderTarget* depth, bool depth_read_only, bool clear_depth,
+               VkImageView density_map) {
     VkRenderingAttachmentInfo attachments[8];
     uint32_t count = 0;
     for (const ColorOutput& c : colors) {
@@ -91,6 +92,12 @@ void BeginPass(VkCommandBuffer cmd, VkRect2D area, std::span<const ColorOutput> 
     rendering.colorAttachmentCount = count;
     rendering.pColorAttachments = attachments;
     rendering.pDepthAttachment = depth ? &depth_info : nullptr;
+    VkRenderingFragmentDensityMapAttachmentInfoEXT density{VK_STRUCTURE_TYPE_RENDERING_FRAGMENT_DENSITY_MAP_ATTACHMENT_INFO_EXT};
+    if (density_map) {
+        density.imageView = density_map;
+        density.imageLayout = VK_IMAGE_LAYOUT_FRAGMENT_DENSITY_MAP_OPTIMAL_EXT;
+        rendering.pNext = &density;
+    }
     vkCmdBeginRendering(cmd, &rendering);
     SetViewport(cmd, area);
     vkCmdSetCullMode(cmd, VK_CULL_MODE_NONE);
@@ -98,8 +105,9 @@ void BeginPass(VkCommandBuffer cmd, VkRect2D area, std::span<const ColorOutput> 
 }
 
 void BeginPass(VkCommandBuffer cmd, VkExtent2D extent, std::initializer_list<ColorOutput> colors, RenderTarget* depth, bool depth_read_only,
-               bool clear_depth) {
-    BeginPass(cmd, VkRect2D{{0, 0}, extent}, std::span<const ColorOutput>(colors.begin(), colors.size()), depth, depth_read_only, clear_depth);
+               bool clear_depth, VkImageView density_map) {
+    BeginPass(cmd, VkRect2D{{0, 0}, extent}, std::span<const ColorOutput>(colors.begin(), colors.size()), depth, depth_read_only, clear_depth,
+              density_map);
 }
 
 VkPipeline CreateGraphicsPipeline(VkDevice device, const PipelineDesc& desc) {
@@ -215,6 +223,7 @@ VkPipeline CreateGraphicsPipeline(VkDevice device, const PipelineDesc& desc) {
     rendering.depthAttachmentFormat = desc.depth;
     VkGraphicsPipelineCreateInfo info{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
     info.pNext = &rendering;
+    if (desc.density_map) info.flags |= VK_PIPELINE_CREATE_RENDERING_FRAGMENT_DENSITY_MAP_ATTACHMENT_BIT_EXT;
     info.stageCount = frag ? 2u : 1u;
     info.pStages = stages;
     info.pVertexInputState = &vertex_input;

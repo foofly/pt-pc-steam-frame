@@ -15,6 +15,10 @@ struct Camera {
     float near_plane = 0.05f;
     /* Not a clip distance (the projection is reverse-Z to infinity); it only bounds the SSAO fade, which the original ends at min(far, 250). */
     float far_plane = 100.0f;
+    /* An off-axis frustum (a VR eye, src/engine/xr/xr_view.h): its centre in NDC, added the way the upscalers' jitter is
+       (the views' jitter carries it, so PixelNdc undoes it), and its width over its height, 0 for the image's own aspect. */
+    glm::vec2 projection_offset{0.0f};
+    float aspect_override = 0.0f;
 
     glm::vec3 Forward() const {
         return glm::normalize(glm::vec3(-std::sin(yaw) * std::cos(pitch), std::sin(pitch), -std::cos(yaw) * std::cos(pitch)));
@@ -34,10 +38,13 @@ struct Camera {
     }
 
     glm::mat4 Projection(float aspect) const {
+        if (aspect_override > 0.0f) aspect = aspect_override;
         const float f = 1.0f / std::tan(fov_y * 0.5f);
         glm::mat4 p(0.0f);
         p[0][0] = f / aspect;
         p[1][1] = -f;
+        p[2][0] = -projection_offset.x;
+        p[2][1] = -projection_offset.y;
         p[2][3] = -1.0f;
         p[3][2] = near_plane;
         return p;

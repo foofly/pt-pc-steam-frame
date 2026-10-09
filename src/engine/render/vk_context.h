@@ -101,6 +101,12 @@ public:
     std::string ray_query_missing;
     VkDeviceSize scratch_alignment = 256;
 
+    /* foveated rendering (VK_EXT_fragment_density_map, docs/vr.md): asked for by the VR mode, on when the device has it */
+    bool want_fragment_density_map = false;
+    bool fragment_density_map = false;
+    VkExtent2D density_texel_min{};
+    VkExtent2D density_texel_max{};
+
     bool memory_budget = false;
     bool device_fault = false;
     bool checkpoints = false;

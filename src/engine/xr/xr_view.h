@@ -42,6 +42,10 @@ struct EyeFrustum {
     float tan_x = 1.0f;
     float tan_y = 1.0f;
     glm::vec4 rect{0.0f, 0.0f, 1.0f, 1.0f};
+    /* the frustum's centre in NDC and its width over its height (Camera::projection_offset, aspect_override); 0 aspect
+       takes the image's */
+    glm::vec2 offset{0.0f};
+    float aspect = 0.0f;
 };
 
 inline glm::uvec2 StereoRenderSize(const glm::vec4 tangents[2], glm::uvec2 swapchain) {
@@ -76,6 +80,22 @@ inline EyeFrustum FrustumFor(const glm::vec4& tangents, glm::uvec2 render_size, 
     f.rect.z = (tangents.y - tangents.x) / (2.0f * f.tan_x);
     f.rect.y = (f.tan_y - tangents.z) / (2.0f * f.tan_y);
     f.rect.w = (tangents.z - tangents.w) / (2.0f * f.tan_y);
+    f.aspect = aspect;
+    return f;
+}
+
+/* One eye drawn with its own off-axis frustum, exactly the view's tangents (left, right, up, down; left and down
+   negative), at the eye swapchain's size: the whole image is the eye's, nothing is cut away. The symmetric frustum
+   around both eyes (StereoRenderSize, FrustumFor) drew about 40% more pixels for a typical headset and stays for the
+   head camera, which builds the scene for both eyes. */
+inline EyeFrustum OwnEyeFrustum(const glm::vec4& tangents) {
+    EyeFrustum f;
+    f.tan_x = std::max((tangents.y - tangents.x) * 0.5f, 1.0e-3f);
+    f.tan_y = std::max((tangents.z - tangents.w) * 0.5f, 1.0e-3f);
+    f.fov_y = 2.0f * std::atan(f.tan_y);
+    /* NDC x grows to the right and y downwards (Camera::Projection flips y): the left tangent maps to x = -1, up to y = -1 */
+    f.offset = glm::vec2(-(tangents.x + tangents.y) * 0.5f / f.tan_x, (tangents.z + tangents.w) * 0.5f / f.tan_y);
+    f.aspect = f.tan_x / f.tan_y;
     return f;
 }
 
@@ -112,6 +132,8 @@ inline Camera EyeCamera(const glm::vec3& position, const glm::quat& orientation,
     c.roll = a.roll;
     c.fov_y = frustum.fov_y;
     c.near_plane = near_plane;
+    c.projection_offset = frustum.offset;
+    c.aspect_override = frustum.aspect;
     return c;
 }
 

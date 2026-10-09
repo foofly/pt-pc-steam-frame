@@ -347,6 +347,10 @@ void SceneRenderer::PrepareFrame(const Camera& camera, const std::vector<DrawIte
         static const float shadow_rotate = std::getenv("PT_SHADOW_ROTATE") ? 1.0f : 0.0f;
         v.jitter = up_.enabled ? glm::vec4(up_.jitter_ndc, up_.mip_bias, shadow_rotate) : glm::vec4(0.0f);
         v.jitter.z += graphics.texture_detail==0?1.0f:graphics.texture_detail==2?-.5f:0.0f;
+        /* an off-axis camera (a VR eye) shifts NDC like the jitter, so the shaders' PixelNdc undoes both; the mirror views
+           set their own jitter */
+        v.jitter.x += camera.projection_offset.x;
+        v.jitter.y += camera.projection_offset.y;
         v.temporal = glm::vec4(0.0f);
         v.dominant_light = glm::vec4(glm::mat3(v.view) * glm::vec3(0.0f, 1.0f, 0.0f), 1.0f);
         return view_count_++;
@@ -376,7 +380,7 @@ void SceneRenderer::PrepareFrame(const Camera& camera, const std::vector<DrawIte
         post_view_ = add_view(unjittered, gl_view, camera.position, glm::vec4(0.0f));
         gpu::View& post = frame_->views[post_view_];
         post.viewport = glm::vec4(output_extent_.width, output_extent_.height, 1.0f / output_extent_.width, 1.0f / output_extent_.height);
-        post.jitter = glm::vec4(0.0f);
+        post.jitter = glm::vec4(camera.projection_offset, 0.0f, 0.0f);
         post.dominant_light = dominant_light;
     }
 
@@ -1151,6 +1155,81 @@ void SceneRenderer::PushConstants(VkCommandBuffer cmd, const void* data, uint32_
     vkCmdPushConstants(cmd, layout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT, 0, size, data);
 }
 
+void SceneRenderer::DestroyDensityMaps() {
+    if (!renderer_) return;
+    for (DensityMap& map : density_maps_) {
+        renderer_->Context().DestroyImage(map.image);
+        map = DensityMap{};
+    }
+}
+
+/* VR foveation (docs/vr.md): the main view of an eye gets its eye's fragment density map when the device has
+   VK_EXT_fragment_density_map and [vr] foveation is on. Full density around the eye's optical axis (the camera's projection
+   offset, in NDC), half outside, and at the strong level a quarter at the edges. Only the lighting and compose passes use it;
+   the G-buffer, shadows, mirror, post and UI stay at full density. */
+VkImageView SceneRenderer::FoveationMap(const ViewSetup& view) {
+    vk::Context& ctx = renderer_->Context();
+    if (foveation_ <= 0 || vr_eye_ < 0 || vr_eye_ > 1 || !ctx.fragment_density_map || view.index != main_view_.index || up_.enabled) {
+        return VK_NULL_HANDLE;
+    }
+    if (!probe_resolve_fdm_ || !light_fdm_ || !compose_fdm_ || (light_rt_ && !light_rt_fdm_) || (light_contact_ && !light_contact_fdm_)) {
+        return VK_NULL_HANDLE;
+    }
+    DensityMap& map = density_maps_[vr_eye_];
+    const VkExtent2D area = ViewArea(view);
+    const glm::vec2 centre = camera_.projection_offset * 0.5f + 0.5f;
+    if (map.image.view && map.extent.width == area.width && map.extent.height == area.height && map.level == foveation_ &&
+        glm::length(map.centre - centre) < 1.0e-3f) {
+        return map.image.view;
+    }
+    if (map.image.view) {
+        vkDeviceWaitIdle(ctx.device);
+        ctx.DestroyImage(map.image);
+    }
+    const VkExtent2D texel{std::max(ctx.density_texel_min.width, 1u), std::max(ctx.density_texel_min.height, 1u)};
+    const uint32_t width = (area.width + texel.width - 1) / texel.width;
+    const uint32_t height = (area.height + texel.height - 1) / texel.height;
+    std::vector<uint8_t> texels(static_cast<size_t>(width) * height * 2);
+    for (uint32_t y = 0; y < height; ++y) {
+        for (uint32_t x = 0; x < width; ++x) {
+            const glm::vec2 uv((x + 0.5f) * texel.width / area.width, (y + 0.5f) * texel.height / area.height);
+            const float r = glm::length((uv - centre) * 2.0f);
+            const uint8_t density = foveation_ >= 2 ? (r < 0.40f ? 255 : r < 0.75f ? 128 : 64) : (r < 0.55f ? 255 : 128);
+            texels[(static_cast<size_t>(y) * width + x) * 2] = density;
+            texels[(static_cast<size_t>(y) * width + x) * 2 + 1] = density;
+        }
+    }
+    vk::Buffer staging;
+    if (!ctx.CreateBuffer(staging, texels.size(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true) || !staging.mapped ||
+        !ctx.CreateImage(map.image, VK_FORMAT_R8G8_UNORM, {width, height, 1},
+                         VK_IMAGE_USAGE_FRAGMENT_DENSITY_MAP_BIT_EXT | VK_IMAGE_USAGE_TRANSFER_DST_BIT)) {
+        ctx.DestroyBuffer(staging);
+        ctx.DestroyImage(map.image);
+        LogWarn("vr: foveation off: cannot create the fragment density map");
+        foveation_ = 0;
+        return VK_NULL_HANDLE;
+    }
+    std::memcpy(staging.mapped, texels.data(), texels.size());
+    ctx.Submit([&](VkCommandBuffer upload) {
+        vk::ImageBarrier(upload, map.image.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_PIPELINE_STAGE_2_NONE, 0, VK_IMAGE_LAYOUT_UNDEFINED,
+                         VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, 1);
+        VkBufferImageCopy region{};
+        region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        region.imageExtent = {width, height, 1};
+        vkCmdCopyBufferToImage(upload, staging.buffer, map.image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+        vk::ImageBarrier(upload, map.image.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_FRAGMENT_DENSITY_PROCESS_BIT_EXT,
+                         VK_ACCESS_2_FRAGMENT_DENSITY_MAP_READ_BIT_EXT, VK_IMAGE_LAYOUT_FRAGMENT_DENSITY_MAP_OPTIMAL_EXT, 1, 1);
+    });
+    ctx.DestroyBuffer(staging);
+    map.extent = area;
+    map.centre = centre;
+    map.level = foveation_;
+    LogInfo("vr: foveation level {} for eye {}: density map {}x{} (texel {}x{}) for {}x{}, centre ({:.3f} {:.3f})", foveation_, vr_eye_, width,
+            height, texel.width, texel.height, area.width, area.height, centre.x, centre.y);
+    return map.image.view;
+}
+
 void SceneRenderer::Fullscreen(VkCommandBuffer cmd, VkPipeline pipeline, const gpu::PassPush& push) {
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
     PushConstants(cmd, &push, sizeof(push));
@@ -1480,9 +1559,12 @@ void SceneRenderer::RecordLighting(VkCommandBuffer cmd, const ViewSetup& view) {
                      {&depth_, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL},
                      {&diffuse_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
                      {&specular_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
-    BeginPass(cmd, area, {{&diffuse_, true, {}}, {&specular_, true, {}}}, &depth_, true, false);
+    // VR foveation: the eye's density map, and the pipelines made for it (FoveationMap)
+    const VkImageView density_map = FoveationMap(view);
+    const bool foveated = density_map != VK_NULL_HANDLE;
+    BeginPass(cmd, area, {{&diffuse_, true, {}}, {&specular_, true, {}}}, &depth_, true, false, density_map);
     if (probes) {
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, probe_resolve_);
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, foveated ? probe_resolve_fdm_ : probe_resolve_);
         gpu::PassPush push;
         push.ids = glm::uvec4(legacy_resolve ? 2u : (shrink ? 1u : 0u), acc_area.width, acc_area.height, view.index);
         PushConstants(cmd, &push, sizeof(push));
@@ -1491,11 +1573,12 @@ void SceneRenderer::RecordLighting(VkCommandBuffer cmd, const ViewSetup& view) {
     const bool contact = rt_contact_active_ && view.index == main_view_.index;
     if (lights && light_count_ > 0) {
         if (rt_active_ || contact) {
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, rt_active_ ? light_rt_ : light_contact_);
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                              rt_active_ ? (foveated ? light_rt_fdm_ : light_rt_) : (foveated ? light_contact_fdm_ : light_contact_));
             const VkDescriptorSet rt_set = rt_->Set(renderer_->FrameIndex());
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, rt_->Layout(), 2, 1, &rt_set, 0, nullptr);
         } else {
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, light_);
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, foveated ? light_fdm_ : light_);
         }
         vkCmdSetCullMode(cmd, cull);
         for (uint32_t i = 0; i < light_count_; ++i) {
@@ -2152,7 +2235,8 @@ void SceneRenderer::RecordView(VkCommandBuffer cmd, const ViewSetup& view, Rende
     if (main_view && mirror_active_) {
         UseTargets(cmd, {{&mirror_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
     }
-    BeginPass(cmd, ViewArea(view), {{&output, false, {}}}, &depth_, true, false);
+    const VkImageView compose_density = main_view ? FoveationMap(view) : VK_NULL_HANDLE;
+    BeginPass(cmd, ViewArea(view), {{&output, false, {}}}, &depth_, true, false, compose_density);
     gpu::PassPush push;
     push.ids = glm::uvec4(view.index, occlusion ? 1u : 0u, 0, 0);
     const TppAtmosphereSettings& tpp = lighting_->tpp;
@@ -2173,7 +2257,7 @@ void SceneRenderer::RecordView(VkCommandBuffer cmd, const ViewSetup& view, Rende
         const float c = u * (1.0f - t) / std::max(t + u - 1.0f, 1.0e-3f);
         push.f0 = glm::vec4(1.0f / (c * c), t, c, 0.0f);
     }
-    Fullscreen(cmd, compose_, push);
+    Fullscreen(cmd, compose_density ? compose_fdm_ : compose_, push);
     vkCmdEndRendering(cmd);
     if (main_view && dump_requested_ && &output == &hdr_) {
         RecordDumpCopy(cmd, output, dump_compose_);

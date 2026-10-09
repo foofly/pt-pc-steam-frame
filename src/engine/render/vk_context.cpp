@@ -350,6 +350,7 @@ bool Context::Init(SDL_Window* window, bool validation, bool want_hdr) {
     }
     ray_query_supported = RayQuerySupport(physical, ray_query_missing);
     VkPhysicalDeviceFaultFeaturesEXT fault_features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT};
+    VkPhysicalDeviceFragmentDensityMapFeaturesEXT density_features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_FEATURES_EXT};
 #ifdef __APPLE__
     VkPhysicalDevicePortabilitySubsetFeaturesKHR portability{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PORTABILITY_SUBSET_FEATURES_KHR};
 #endif
@@ -400,6 +401,30 @@ bool Context::Init(SDL_Window* window, bool validation, bool want_hdr) {
             }
         }
         LogInfo("vulkan: diagnostics: memory budget {}, device fault {}, checkpoints {}", memory_budget, device_fault, checkpoints);
+        fragment_density_map = false;
+        if (want_fragment_density_map) {
+            VkPhysicalDeviceFragmentDensityMapFeaturesEXT query{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_FEATURES_EXT};
+            VkPhysicalDeviceFeatures2 features2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+            features2.pNext = &query;
+            if (has(VK_EXT_FRAGMENT_DENSITY_MAP_EXTENSION_NAME)) vkGetPhysicalDeviceFeatures2(physical, &features2);
+            if (query.fragmentDensityMap) {
+                add(VK_EXT_FRAGMENT_DENSITY_MAP_EXTENSION_NAME);
+                density_features.fragmentDensityMap = VK_TRUE;
+                density_features.pNext = features.pNext;
+                features.pNext = &density_features;
+                VkPhysicalDeviceFragmentDensityMapPropertiesEXT density_properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_PROPERTIES_EXT};
+                VkPhysicalDeviceProperties2 properties2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
+                properties2.pNext = &density_properties;
+                vkGetPhysicalDeviceProperties2(physical, &properties2);
+                density_texel_min = density_properties.minFragmentDensityTexelSize;
+                density_texel_max = density_properties.maxFragmentDensityTexelSize;
+                fragment_density_map = true;
+                LogInfo("vulkan: fragment density map on (texel {}x{} to {}x{})", density_texel_min.width, density_texel_min.height,
+                        density_texel_max.width, density_texel_max.height);
+            } else {
+                LogInfo("vulkan: fragment density map unavailable: foveated rendering is off");
+            }
+        }
     }
     VkPhysicalDeviceRayQueryFeaturesKHR ray_query_features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR};
     VkPhysicalDeviceAccelerationStructureFeaturesKHR acceleration_features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR};

@@ -206,6 +206,8 @@ public:
     bool RayTracingReady() const { return rt_ != nullptr; }
     bool RayTracingSupported(std::string& reason) const;
     void SetVrEye(int eye) { vr_eye_ = eye; }
+    /* VR foveation (docs/vr.md): 0 off, 1 light, 2 strong; used only when the device has VK_EXT_fragment_density_map */
+    void SetVrFoveation(int level) { foveation_ = level; }
 
 private:
     struct FrameSlot {
@@ -500,6 +502,23 @@ private:
     std::vector<RtCaster> rt_casters_;
     bool rt_contact_active_ = false;
     VkPipeline light_contact_ = VK_NULL_HANDLE;
+    /* the pipelines of the foveated lighting and compose passes (PipelineDesc::density_map), and one fragment density map per
+       eye around its optical axis (VR only) */
+    VkPipeline probe_resolve_fdm_ = VK_NULL_HANDLE;
+    VkPipeline light_fdm_ = VK_NULL_HANDLE;
+    VkPipeline light_rt_fdm_ = VK_NULL_HANDLE;
+    VkPipeline light_contact_fdm_ = VK_NULL_HANDLE;
+    VkPipeline compose_fdm_ = VK_NULL_HANDLE;
+    struct DensityMap {
+        vk::Image image;
+        VkExtent2D extent{};
+        glm::vec2 centre{-1.0f};
+        int level = 0;
+    };
+    DensityMap density_maps_[2];
+    int foveation_ = 0;
+    VkImageView FoveationMap(const ViewSetup& view);
+    void DestroyDensityMaps();
     float rt_contact_reach_ = 0.35f;
     bool rt_contact_legacy_ = false;
     bool rt_ao_active_ = false;

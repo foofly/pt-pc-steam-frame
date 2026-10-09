@@ -93,6 +93,7 @@ struct AppSettings {
         float resolution_scale = 1.0f;
         float height_offset = 0.0f;
         float world_scale = 1.0f;
+        int foveation = 1;
         bool operator==(const Vr&) const = default;
     } vr;
     std::map<std::string, bool> mods;

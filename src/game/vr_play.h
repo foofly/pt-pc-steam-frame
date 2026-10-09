@@ -92,7 +92,9 @@ private:
     glm::vec3 last_anchor_{0.0f};
     glm::vec3 last_correction_{0.0f};
     glm::uvec2 render_size_{0, 0};
+    glm::uvec2 head_size_{0, 0};
     xr::EyeFrustum frusta_[2];
+    xr::EyeFrustum head_frustum_;
     uint32_t raw_previous_ = 0;
     bool snap_armed_ = true;
     bool settings_previous_ = false;

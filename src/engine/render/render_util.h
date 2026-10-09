@@ -30,9 +30,12 @@ struct ColorOutput {
     VkClearColorValue clear_value{};
 };
 
+/* density_map: a fragment density map (VK_EXT_fragment_density_map) for foveated rendering in VR; every pipeline bound in such a
+   pass must be made with PipelineDesc::density_map */
 void BeginPass(VkCommandBuffer cmd, VkExtent2D extent, std::initializer_list<ColorOutput> colors, RenderTarget* depth = nullptr,
-               bool depth_read_only = false, bool clear_depth = false);
-void BeginPass(VkCommandBuffer cmd, VkRect2D area, std::span<const ColorOutput> colors, RenderTarget* depth, bool depth_read_only, bool clear_depth);
+               bool depth_read_only = false, bool clear_depth = false, VkImageView density_map = VK_NULL_HANDLE);
+void BeginPass(VkCommandBuffer cmd, VkRect2D area, std::span<const ColorOutput> colors, RenderTarget* depth, bool depth_read_only, bool clear_depth,
+               VkImageView density_map = VK_NULL_HANDLE);
 void SetViewport(VkCommandBuffer cmd, VkRect2D area);
 void BeginLabel(VkCommandBuffer cmd, const char* name);
 extern bool g_checkpoints;
@@ -56,6 +59,8 @@ struct PipelineDesc {
     std::vector<BlendMode> blends;
     VkColorComponentFlags write_mask = 0xF;
     std::vector<VkColorComponentFlags> write_masks;
+    /* for passes begun with a fragment density map (BeginPass, VR foveation) */
+    bool density_map = false;
 };
 
 VkPipeline CreateGraphicsPipeline(VkDevice device, const PipelineDesc& desc);

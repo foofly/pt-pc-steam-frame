@@ -174,6 +174,12 @@ bool SceneRenderer::Init(Renderer& renderer, TextureManager& textures) {
             light_rt_ = CreateGraphicsPipeline(device_, volume);
             volume.fragment = "light_contact.frag";
             light_contact_ = CreateGraphicsPipeline(device_, volume);
+            if (ctx.fragment_density_map) {
+                volume.density_map = true;
+                light_contact_fdm_ = CreateGraphicsPipeline(device_, volume);
+                volume.fragment = "light_rt.frag";
+                light_rt_fdm_ = CreateGraphicsPipeline(device_, volume);
+            }
             PipelineDesc reflect;
             reflect.layout = rt_->Layout();
             reflect.fragment = "reflect_make_rt.frag";
@@ -304,6 +310,10 @@ bool SceneRenderer::CreatePipelines() {
         resolve.depth = kDepthFormat;
         resolve.write_masks = {0xF, 0x0};
         probe_resolve_ = CreateGraphicsPipeline(device_, resolve);
+        if (renderer_->Context().fragment_density_map) {
+            resolve.density_map = true;
+            probe_resolve_fdm_ = CreateGraphicsPipeline(device_, resolve);
+        }
     }
     volume.colors = {kLightFormat, kLightFormat};
     volume.depth = kDepthFormat;
@@ -314,6 +324,11 @@ bool SceneRenderer::CreatePipelines() {
     volume.blend = BlendMode::Additive;
     volume.write_masks.clear();
     light_ = CreateGraphicsPipeline(device_, volume);
+    if (renderer_->Context().fragment_density_map) {
+        volume.density_map = true;
+        light_fdm_ = CreateGraphicsPipeline(device_, volume);
+        volume.density_map = false;
+    }
 
     PipelineDesc full;
     full.layout = layout_;
@@ -321,6 +336,11 @@ bool SceneRenderer::CreatePipelines() {
     full.colors = {kHdrFormat};
     full.depth = kDepthFormat;
     compose_ = CreateGraphicsPipeline(device_, full);
+    if (renderer_->Context().fragment_density_map) {
+        full.density_map = true;
+        compose_fdm_ = CreateGraphicsPipeline(device_, full);
+        full.density_map = false;
+    }
 
     PipelineDesc forward;
     forward.layout = layout_;
@@ -443,7 +463,8 @@ bool SceneRenderer::CreatePipelines() {
 }
 
 void SceneRenderer::DestroyPipelines() {
-    VkPipeline* all[] = {&gbuffer_, &decal_, &shadow_pipeline_, &probe_, &probe_resolve_, &light_, &compose_, &forward_, &forward_emissive_, &luminance_, &bright_,
+    VkPipeline* all[] = {&gbuffer_, &decal_, &shadow_pipeline_, &probe_, &probe_resolve_, &light_, &compose_, &probe_resolve_fdm_, &light_fdm_,
+                         &compose_fdm_, &forward_, &forward_emissive_, &luminance_, &bright_,
                          &reflect_colour_, &kawase_, &bloom_add_, &kawase_sum_, &gaussian_, &tonemap_, &fxaa_, &dof_ratio_, &dof_down_, &dof_blur_, &dof_blend_,
                          &mb_velocity_, &mb_tile_pipeline_, &mb_bake_pipeline_, &mb_mcguire_, &mb_composite_, &velocity_pipeline_, &fsblur_,
                          &banding_, &screen_fx_, &debug_, &occlusion_, &occlusion_blur_, &reflect_make_, &reflect_blend_, &vfx_composite_,
@@ -532,7 +553,7 @@ void SceneRenderer::Shutdown() {
         rt_->Shutdown();
         rt_.reset();
     }
-    for (VkPipeline* p : {&light_rt_, &light_contact_, &reflect_make_rt_, &reflect_blend_rt_, &reflect_layer_rt_, &rt_ao_trace_, &rt_ao_filter_, &probe_ao_}) {
+    for (VkPipeline* p : {&light_rt_, &light_contact_, &light_rt_fdm_, &light_contact_fdm_, &reflect_make_rt_, &reflect_blend_rt_, &reflect_layer_rt_, &rt_ao_trace_, &rt_ao_filter_, &probe_ao_}) {
         if (*p) {
             vkDestroyPipeline(device_, *p, nullptr);
             *p = VK_NULL_HANDLE;
@@ -540,6 +561,7 @@ void SceneRenderer::Shutdown() {
     }
     DestroyPipelines();
     DestroyTargets();
+    DestroyDensityMaps();
     ctx.DestroyBuffer(dump_compose_);
     ctx.DestroyBuffer(dump_forward_);
     ctx.DestroyBuffer(dump_scene_);
