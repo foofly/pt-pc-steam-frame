@@ -208,6 +208,20 @@ public:
     void SetVrEye(int eye) { vr_eye_ = eye; }
     /* VR foveation (docs/vr.md): 0 off, 1 light, 2 strong; used only when the device has VK_EXT_fragment_density_map */
     void SetVrFoveation(int level) { foveation_ = level; }
+    /* XR_FB_space_warp (docs/vr.md): the eye's motion vector and depth swapchain images, filled at the end of Render (null: none);
+       reset drops the eye's previous view-projection (a cut), so the motion is zero for the frame */
+    struct SpaceWarpTarget {
+        VkImage motion = VK_NULL_HANDLE;
+        VkImageView motion_view = VK_NULL_HANDLE;
+        VkImage depth = VK_NULL_HANDLE;
+        VkImageView depth_view = VK_NULL_HANDLE;
+        VkFormat depth_format = VK_FORMAT_UNDEFINED;
+        VkExtent2D extent{};
+    };
+    void SetSpaceWarpTarget(const SpaceWarpTarget* target, bool reset) {
+        space_warp_target_ = target;
+        if (reset) space_warp_history_[0] = space_warp_history_[1] = false;
+    }
 
 private:
     struct FrameSlot {
@@ -516,6 +530,11 @@ private:
         int level = 0;
     };
     DensityMap density_maps_[2];
+    const SpaceWarpTarget* space_warp_target_ = nullptr;
+    glm::mat4 space_warp_previous_[2]{glm::mat4(1.0f), glm::mat4(1.0f)};
+    bool space_warp_history_[2]{};
+    std::vector<std::pair<VkFormat, VkPipeline>> space_warp_pipelines_;
+    void RecordSpaceWarp(VkCommandBuffer cmd);
     int foveation_ = 0;
     VkImageView FoveationMap(const ViewSetup& view);
     void DestroyDensityMaps();

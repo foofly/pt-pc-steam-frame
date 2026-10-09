@@ -1230,6 +1230,74 @@ VkImageView SceneRenderer::FoveationMap(const ViewSetup& view) {
     return map.image.view;
 }
 
+/* XR_FB_space_warp (docs/vr.md, spacewarp.frag): after an eye's post, its motion vectors (from the scene depth and the eye's
+   previous view-projection) and depth go into the runtime's swapchain images, left in the layouts OpenXR expects at release
+   (colour and depth-stencil attachment optimal). */
+void SceneRenderer::RecordSpaceWarp(VkCommandBuffer cmd) {
+    const SpaceWarpTarget* target = space_warp_target_;
+    if (!target || !target->motion || !target->depth || vr_eye_ < 0 || vr_eye_ > 1) return;
+    VkPipeline pipeline = VK_NULL_HANDLE;
+    for (const auto& [format, p] : space_warp_pipelines_) {
+        if (format == target->depth_format) pipeline = p;
+    }
+    if (!pipeline) {
+        PipelineDesc desc;
+        desc.layout = layout_;
+        desc.fragment = "spacewarp.frag";
+        desc.colors = {VK_FORMAT_R16G16B16A16_SFLOAT};
+        desc.depth = target->depth_format;
+        desc.depth_test = true;
+        desc.depth_write = true;
+        desc.depth_compare = VK_COMPARE_OP_ALWAYS;
+        pipeline = CreateGraphicsPipeline(device_, desc);
+        space_warp_pipelines_.push_back({target->depth_format, pipeline});
+        LogInfo("vr: space warp pass {} for depth format {}", pipeline ? "ready" : "unavailable", static_cast<int>(target->depth_format));
+    }
+    if (!pipeline) return;
+    const int eye = vr_eye_;
+    const gpu::View& view = frame_->views[main_view_.index];
+    BeginLabel(cmd, "space warp");
+    UseTargets(cmd, {{&depth_, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL}});
+    const bool stencil = target->depth_format == VK_FORMAT_D24_UNORM_S8_UINT || target->depth_format == VK_FORMAT_D32_SFLOAT_S8_UINT;
+    const VkImageAspectFlags depth_aspect = VK_IMAGE_ASPECT_DEPTH_BIT | (stencil ? VK_IMAGE_ASPECT_STENCIL_BIT : 0);
+    vk::ImageBarrier(cmd, target->motion, VK_IMAGE_ASPECT_COLOR_BIT, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, 0, VK_IMAGE_LAYOUT_UNDEFINED,
+                     VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 1, 1);
+    vk::ImageBarrier(cmd, target->depth, depth_aspect, VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT, 0,
+                     VK_IMAGE_LAYOUT_UNDEFINED, VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                     VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, 1, 1);
+    VkRenderingAttachmentInfo motion{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+    motion.imageView = target->motion_view;
+    motion.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    motion.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    motion.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    VkRenderingAttachmentInfo depth{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+    depth.imageView = target->depth_view;
+    depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    depth.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    depth.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    VkRenderingInfo rendering{VK_STRUCTURE_TYPE_RENDERING_INFO};
+    rendering.renderArea = {{0, 0}, target->extent};
+    rendering.layerCount = 1;
+    rendering.colorAttachmentCount = 1;
+    rendering.pColorAttachments = &motion;
+    rendering.pDepthAttachment = &depth;
+    vkCmdBeginRendering(cmd, &rendering);
+    SetViewport(cmd, {{0, 0}, target->extent});
+    vkCmdSetCullMode(cmd, VK_CULL_MODE_NONE);
+    vkCmdSetFrontFace(cmd, VK_FRONT_FACE_COUNTER_CLOCKWISE);
+    BindSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS);
+    gpu::PassPush push;
+    push.ids = glm::uvec4(0, 0, 0, main_view_.index);
+    push.f0 = glm::vec4(1.0f / static_cast<float>(target->extent.width), 1.0f / static_cast<float>(target->extent.height), 0.0f, 0.0f);
+    // without a previous frame of this eye (the first, or after a cut) the previous view-projection is this one: no motion
+    push.m = space_warp_history_[eye] ? space_warp_previous_[eye] : view.view_projection;
+    Fullscreen(cmd, pipeline, push);
+    vkCmdEndRendering(cmd);
+    EndLabel(cmd);
+    space_warp_previous_[eye] = view.view_projection;
+    space_warp_history_[eye] = true;
+}
+
 void SceneRenderer::Fullscreen(VkCommandBuffer cmd, VkPipeline pipeline, const gpu::PassPush& push) {
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
     PushConstants(cmd, &push, sizeof(push));
@@ -2579,6 +2647,7 @@ void SceneRenderer::Render(const Camera& camera, const std::vector<DrawItem>& it
         RecordDebug(cmd);
         EndLabel(cmd);
     }
+    RecordSpaceWarp(cmd);
     Stamp(cmd, 6);
     queries_ = VK_NULL_HANDLE;
     last_timed_slot_ = renderer_->FrameIndex();

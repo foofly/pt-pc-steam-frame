@@ -343,6 +343,7 @@ struct Session : Object {
     XrPath profile = XR_NULL_PATH;
     bool focused = false;
     int64_t projection_layers = 0;
+    int64_t space_warp_views = 0;
     int64_t quad_layers = 0;
 };
 
@@ -679,7 +680,7 @@ float HalfToFloat(uint16_t h) {
     return f;
 }
 
-bool DumpImage(Session* s, Swapchain* sc, uint32_t index, uint32_t layer, const std::string& path, const XrRect2Di* rect) {
+bool DumpImage(Session* s, Swapchain* sc, uint32_t index, uint32_t layer, const std::string& path, const XrRect2Di* rect, bool motion = false) {
     const uint32_t w = sc->info.width;
     const uint32_t h = sc->info.height;
     const int64_t format = sc->info.format;
@@ -738,11 +739,23 @@ bool DumpImage(Session* s, Swapchain* sc, uint32_t index, uint32_t layer, const 
             v = v <= 0.0031308f ? v * 12.92f : 1.055f * std::pow(v, 1.0f / 2.4f) - 0.055f;
             return static_cast<uint8_t>(std::lround(v * 255.0f));
         };
+        double motion_sum = 0.0;
+        float motion_max = 0.0f;
         for (int y = 0; y < rh; ++y) {
             for (int x = 0; x < rw; ++x) {
                 const size_t src = (size_t(y0 + y) * w + (x0 + x));
                 uint8_t* dst = &rgba[(size_t(y) * rw + x) * 4];
-                if (half) {
+                if (half && motion) {
+                    // XR_FB_space_warp motion vectors (NDC deltas): 0.5 + 10 v, so grey is still and a tenth of the view saturates
+                    const uint16_t* p = static_cast<const uint16_t*>(mapped) + src * 4;
+                    const float mx = HalfToFloat(p[0]);
+                    const float my = HalfToFloat(p[1]);
+                    for (int c = 0; c < 3; ++c) dst[c] = static_cast<uint8_t>(std::lround(std::clamp(0.5f + 10.0f * HalfToFloat(p[c]), 0.0f, 1.0f) * 255.0f));
+                    dst[3] = 255;
+                    const float length = std::sqrt(mx * mx + my * my);
+                    motion_sum += length;
+                    motion_max = std::max(motion_max, std::isfinite(length) ? length : 1.0e9f);
+                } else if (half) {
                     const uint16_t* p = static_cast<const uint16_t*>(mapped) + src * 4;
                     for (int c = 0; c < 3; ++c) dst[c] = encode(HalfToFloat(p[c]));
                     dst[3] = static_cast<uint8_t>(std::lround(std::clamp(HalfToFloat(p[3]), 0.0f, 1.0f) * 255.0f));
@@ -758,6 +771,7 @@ bool DumpImage(Session* s, Swapchain* sc, uint32_t index, uint32_t layer, const 
             }
         }
         written = stbi_write_png(path.c_str(), rw, rh, 4, rgba.data(), rw * 4) != 0;
+        if (motion) Log("motion vectors %s: mean %.5f max %.5f NDC", path.c_str(), motion_sum / std::max(1, rw * rh), motion_max);
         s->vk.UnmapMemory(s->vk_device, memory);
     }
     s->vk.DestroyBuffer(s->vk_device, buffer, nullptr);
@@ -787,7 +801,12 @@ std::string FormatName(int64_t f) {
 XRAPI_ATTR XrResult XRAPI_CALL GetInstanceProcAddr(XrInstance instance, const char* name, PFN_xrVoidFunction* function);
 
 const std::vector<std::pair<const char*, uint32_t>>& Extensions() {
-    static const std::vector<std::pair<const char*, uint32_t>> list = {{XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME, 2}};
+    // XR_FB_space_warp only with PT_XRTEST_SPACE_WARP=1, so the other runs see the runtime they always saw
+    static const std::vector<std::pair<const char*, uint32_t>> list = [] {
+        std::vector<std::pair<const char*, uint32_t>> l = {{XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME, 2}};
+        if (const char* v = std::getenv("PT_XRTEST_SPACE_WARP"); v && *v == '1') l.push_back({XR_FB_SPACE_WARP_EXTENSION_NAME, 2});
+        return l;
+    }();
     return list;
 }
 
@@ -870,9 +889,9 @@ XRAPI_ATTR XrResult XRAPI_CALL DestroyInstance(XrInstance h) {
     if (!inst) return Violation(XR_ERROR_HANDLE_INVALID, "xrDestroyInstance: invalid instance");
     if (!inst->sessions.empty()) Violation(XR_SUCCESS, "xrDestroyInstance with %zu sessions left (destroyed with it)", inst->sessions.size());
     for (Session* s : inst->sessions) {
-        Log("summary: frames waited %lld begun %lld ended %lld, projection layers %lld, quad layers %lld", static_cast<long long>(s->waited),
+        Log("summary: frames waited %lld begun %lld ended %lld, projection layers %lld, quad layers %lld, space warp views %lld", static_cast<long long>(s->waited),
             static_cast<long long>(s->begun), static_cast<long long>(s->ended), static_cast<long long>(s->projection_layers),
-            static_cast<long long>(s->quad_layers));
+            static_cast<long long>(s->quad_layers), static_cast<long long>(s->space_warp_views));
     }
     for (ActionSet* set : inst->action_sets) {
         for (Action* a : set->actions) delete a;
@@ -951,6 +970,17 @@ XRAPI_ATTR XrResult XRAPI_CALL GetSystemProperties(XrInstance h, XrSystemId id, 
     std::snprintf(props->systemName, sizeof(props->systemName), "pt-port simulated headset");
     props->graphicsProperties = {4096, 4096, 16};
     props->trackingProperties = {XR_TRUE, XR_TRUE};
+    for (auto* next = static_cast<XrBaseOutStructure*>(props->next); next; next = next->next) {
+        if (next->type == XR_TYPE_SYSTEM_SPACE_WARP_PROPERTIES_FB) {
+            Instance* inst = GetInstance(h);
+            if (!inst->extensions.count(XR_FB_SPACE_WARP_EXTENSION_NAME)) {
+                return Violation(XR_ERROR_VALIDATION_FAILURE, "xrGetSystemProperties: XrSystemSpaceWarpPropertiesFB without XR_FB_space_warp");
+            }
+            auto* warp = reinterpret_cast<XrSystemSpaceWarpPropertiesFB*>(next);
+            warp->recommendedMotionVectorImageRectWidth = inst->view_w / 2;
+            warp->recommendedMotionVectorImageRectHeight = inst->view_h / 2;
+        }
+    }
     return XR_SUCCESS;
 }
 
@@ -1129,9 +1159,9 @@ XRAPI_ATTR XrResult XRAPI_CALL DestroySession(XrSession h) {
     Session* s = GetSession(h);
     if (!s) return Violation(XR_ERROR_HANDLE_INVALID, "xrDestroySession: invalid session");
     if (s->running) Violation(XR_SUCCESS, "xrDestroySession while running (xrEndSession not called)");
-    Log("summary: frames waited %lld begun %lld ended %lld, projection layers %lld, quad layers %lld", static_cast<long long>(s->waited),
+    Log("summary: frames waited %lld begun %lld ended %lld, projection layers %lld, quad layers %lld, space warp views %lld", static_cast<long long>(s->waited),
         static_cast<long long>(s->begun), static_cast<long long>(s->ended), static_cast<long long>(s->projection_layers),
-        static_cast<long long>(s->quad_layers));
+        static_cast<long long>(s->quad_layers), static_cast<long long>(s->space_warp_views));
     if (s->vk.DeviceWaitIdle) s->vk.DeviceWaitIdle(s->vk_device);
     for (Swapchain* sc : s->swapchains) {
         for (SwapchainImage& i : sc->images) {
@@ -1310,6 +1340,42 @@ XRAPI_ATTR XrResult XRAPI_CALL EndFrame(XrSession h, const XrFrameEndInfo* info)
                 if (!(f.angleLeft < f.angleRight && f.angleDown < f.angleUp)) return Violation(XR_ERROR_VALIDATION_FAILURE, "projection view %u fov", v);
                 Swapchain* sc = nullptr;
                 if (const XrResult r = CheckSubImage(s, view.subImage, "projection view", &sc); r != XR_SUCCESS) return r;
+                for (auto* next = static_cast<const XrBaseInStructure*>(view.next); next; next = next->next) {
+                    if (next->type != XR_TYPE_COMPOSITION_LAYER_SPACE_WARP_INFO_FB) continue;
+                    if (!s->instance->extensions.count(XR_FB_SPACE_WARP_EXTENSION_NAME)) {
+                        return Violation(XR_ERROR_VALIDATION_FAILURE, "projection view %u: space warp info without XR_FB_space_warp", v);
+                    }
+                    auto* warp = reinterpret_cast<const XrCompositionLayerSpaceWarpInfoFB*>(next);
+                    if (warp->layerFlags & ~XR_COMPOSITION_LAYER_SPACE_WARP_INFO_FRAME_SKIP_BIT_FB) {
+                        return Violation(XR_ERROR_VALIDATION_FAILURE, "projection view %u: space warp flags", v);
+                    }
+                    if (warp->nearZ == warp->farZ) return Violation(XR_ERROR_VALIDATION_FAILURE, "projection view %u: space warp nearZ == farZ", v);
+                    if (!(warp->minDepth >= 0.0f && warp->maxDepth <= 1.0f && warp->minDepth <= warp->maxDepth)) {
+                        return Violation(XR_ERROR_VALIDATION_FAILURE, "projection view %u: space warp depth range", v);
+                    }
+                    if (!Normalized(warp->appSpaceDeltaPose.orientation)) {
+                        return Violation(XR_ERROR_POSE_INVALID, "projection view %u: space warp delta orientation not normalized", v);
+                    }
+                    Swapchain* motion = nullptr;
+                    Swapchain* depth = nullptr;
+                    if (const XrResult r = CheckSubImage(s, warp->motionVectorSubImage, "space warp motion vectors", &motion); r != XR_SUCCESS) return r;
+                    if (const XrResult r = CheckSubImage(s, warp->depthSubImage, "space warp depth", &depth); r != XR_SUCCESS) return r;
+                    if (AspectOf(depth->info.format) == VK_IMAGE_ASPECT_COLOR_BIT) {
+                        return Violation(XR_ERROR_VALIDATION_FAILURE, "projection view %u: space warp depth image is not a depth format", v);
+                    }
+                    ++s->space_warp_views;
+                    if (dump) {
+                        char name[64];
+                        std::snprintf(name, sizeof(name), "f%05d_layer%u_view%u_motion.png", frame, i, v);
+                        DumpImage(s, motion, static_cast<uint32_t>(motion->last_released), 0, (std::filesystem::path(s->instance->out_dir) / name).string(),
+                                  &warp->motionVectorSubImage.imageRect, true);
+                        Log("space warp view %u: flags %llx delta (%.4f %.4f %.4f) q (%.4f %.4f %.4f %.4f) depth %.2f..%.2f near %g far %g", v,
+                            static_cast<unsigned long long>(warp->layerFlags), warp->appSpaceDeltaPose.position.x, warp->appSpaceDeltaPose.position.y,
+                            warp->appSpaceDeltaPose.position.z, warp->appSpaceDeltaPose.orientation.x, warp->appSpaceDeltaPose.orientation.y,
+                            warp->appSpaceDeltaPose.orientation.z, warp->appSpaceDeltaPose.orientation.w, warp->minDepth, warp->maxDepth, warp->nearZ,
+                            warp->farZ);
+                    }
+                }
                 if (dump) {
                     char name[64];
                     std::snprintf(name, sizeof(name), "f%05d_layer%u_view%u.png", frame, i, v);

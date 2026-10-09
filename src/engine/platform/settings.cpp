@@ -155,6 +155,7 @@ bool LoadAppSettings(const std::filesystem::path& path, AppSettings& out) {
     Read(v, "vr.height_offset", out.vr.height_offset);
     Read(v, "vr.world_scale", out.vr.world_scale);
     Read(v, "vr.foveation", out.vr.foveation);
+    Read(v, "vr.space_warp", out.vr.space_warp);
     {
         std::string reached;
         Read(v, "progress.loops_reached", reached);
@@ -207,6 +208,7 @@ bool LoadAppSettings(const std::filesystem::path& path, AppSettings& out) {
     out.vr.flashlight_hand = std::clamp(out.vr.flashlight_hand, 0, 1);
     out.vr.turn = std::clamp(out.vr.turn, 0, 1);
     out.vr.foveation = std::clamp(out.vr.foveation, 0, 2);
+    out.vr.space_warp = std::clamp(out.vr.space_warp, 0, 1);
     out.vr.snap_degrees = std::isfinite(out.vr.snap_degrees) ? std::clamp(out.vr.snap_degrees, 10.0f, 90.0f) : 30.0f;
     out.vr.smooth_speed = std::isfinite(out.vr.smooth_speed) ? std::clamp(out.vr.smooth_speed, 20.0f, 360.0f) : 90.0f;
     out.vr.resolution_scale = std::isfinite(out.vr.resolution_scale) ? std::clamp(out.vr.resolution_scale, 0.5f, 2.0f) : 1.0f;
@@ -324,7 +326,10 @@ bool SaveAppSettings(const std::filesystem::path& path, const AppSettings& s) {
          << "world_scale = " << s.vr.world_scale << "\n"
          << "; foveated rendering on devices with VK_EXT_fragment_density_map: the lighting and compose passes shade the edges of\n"
          << "; each eye's image at a lower density (0 off, 1 light, 2 strong); applies at the next start\n"
-         << "foveation = " << s.vr.foveation << "\n";
+         << "foveation = " << s.vr.foveation << "\n"
+         << "; space warp on runtimes with XR_FB_space_warp: motion vectors and depth go with the eyes, so the runtime's in-between\n"
+         << "; frames follow the scene when the game runs slower than the headset (0 off, 1 on); applies at the next start\n"
+         << "space_warp = " << s.vr.space_warp << "\n";
     text << "\n[progress]\n"
          << "; the loop browser's unlocks (release builds): the entries reached in play (hex bits) and the game finished once\n"
          << "loops_reached = " << std::hex << s.progress.loops_reached << std::dec << "\n"

@@ -224,6 +224,33 @@ bool VrPlay::PrepareStereo(Game& game, const Camera& logic, float dt, bool menu_
         for (xr::Swapchain* sc : {&host_.EyeSwapchain(0), &host_.EyeSwapchain(1), &host_.HudSwapchain()}) host_.Release(*sc);
         return false;
     }
+    // XR_FB_space_warp (docs/vr.md): the app space is the game's mapping of the tracking space into the world,
+    // world = anchor + correction + rig (local - centre); its change since the last frame is the player's walking and turning.
+    // The runtime should not extrapolate across a cut or a warp (or the first frame).
+    out.space_warp = false;
+    if (host_.SpaceWarp() && settings_.space_warp > 0) {
+        out.space_warp = true;
+        for (int i = 0; i < 2 && out.space_warp; ++i) {
+            out.space_warp = target(host_.MotionSwapchain(i), glm::vec4(0.0f, 0.0f, 1.0f, 1.0f), out.motion[i]) &&
+                             target(host_.DepthSwapchain(i), glm::vec4(0.0f, 0.0f, 1.0f, 1.0f), out.depth[i]);
+        }
+        if (!out.space_warp) {
+            for (int i = 0; i < 2; ++i) {
+                host_.Release(host_.MotionSwapchain(i));
+                host_.Release(host_.DepthSwapchain(i));
+            }
+        }
+    }
+    const glm::quat space_orientation = rig_.Rotation();
+    const glm::vec3 space_position = last_anchor_ + last_correction_ + rig_.Offset(glm::vec3(0.0f));
+    const glm::quat inverse = glm::inverse(app_space_orientation_);
+    out.app_delta_orientation = app_space_valid_ ? glm::normalize(inverse * space_orientation) : glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+    out.app_delta_position = app_space_valid_ ? inverse * (space_position - app_space_position_) : glm::vec3(0.0f);
+    const float turned = 2.0f * std::acos(std::clamp(std::abs(out.app_delta_orientation.w), 0.0f, 1.0f));
+    out.space_warp_skip = !app_space_valid_ || glm::length(out.app_delta_position) > 0.5f || turned > glm::radians(15.0f);
+    app_space_orientation_ = space_orientation;
+    app_space_position_ = space_position;
+    app_space_valid_ = true;
     return true;
 }
 
@@ -231,8 +258,19 @@ void VrPlay::FinishStereo(const Stereo& stereo) {
     host_.Release(host_.EyeSwapchain(0));
     host_.Release(host_.EyeSwapchain(1));
     host_.Release(host_.HudSwapchain());
+    if (stereo.space_warp) {
+        for (int i = 0; i < 2; ++i) {
+            host_.Release(host_.MotionSwapchain(i));
+            host_.Release(host_.DepthSwapchain(i));
+        }
+    }
     xr::FrameLayers layers;
     layers.projection = true;
+    layers.space_warp = stereo.space_warp;
+    layers.space_warp_skip = stereo.space_warp_skip;
+    layers.app_delta_orientation = stereo.app_delta_orientation;
+    layers.app_delta_position = stereo.app_delta_position;
+    layers.near_plane = kNearPlane;
     layers.eyes[0] = stereo.poses[0];
     layers.eyes[1] = stereo.poses[1];
     layers.hud = true;
@@ -249,6 +287,7 @@ bool VrPlay::PrepareScreen(XrTarget& out) {
     if (!waited_ || !host_.ShouldRender()) {
         return false;
     }
+    app_space_valid_ = false;  // the stereo view after the virtual screen is a cut for space warp
     const xr::ViewPose& head = host_.Head();
     if (!screen_placed_) {
         const float yaw = host_.ViewsValid() ? xr::AnglesOf(head.orientation).yaw : 0.0f;

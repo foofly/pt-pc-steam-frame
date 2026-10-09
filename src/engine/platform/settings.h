@@ -94,6 +94,7 @@ struct AppSettings {
         float height_offset = 0.0f;
         float world_scale = 1.0f;
         int foveation = 1;
+        int space_warp = 1;
         bool operator==(const Vr&) const = default;
     } vr;
     std::map<std::string, bool> mods;

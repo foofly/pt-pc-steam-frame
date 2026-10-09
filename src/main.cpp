@@ -4362,7 +4362,12 @@ int RunGame(App& app, pt::Vfs& vfs) {
                         continue;
                     }
                     app.scene.SetVrEye(eye);
+                    // XR_FB_space_warp: this eye's motion vector and depth images, written at the end of its render
+                    pt::SceneRenderer::SpaceWarpTarget space_warp{stereo.motion[eye].image, stereo.motion[eye].view, stereo.depth[eye].image,
+                                                                  stereo.depth[eye].view, stereo.depth[eye].format, stereo.motion[eye].extent};
+                    app.scene.SetSpaceWarpTarget(stereo.space_warp ? &space_warp : nullptr, eye == 0 && stereo.space_warp_skip);
                     app.scene.Render(stereo.eyes[eye], draw_items, lighting, eye == 0 ? dt : 0.0f);
+                    app.scene.SetSpaceWarpTarget(nullptr, false);
                     ui.SetVrHud(true);
                     pt::XrFrame xr_frame;
                     xr_frame.eye = &stereo.targets[eye];
@@ -4930,7 +4935,7 @@ int main(int argc, char** argv) {
             ImGui::GetIO().IniFilename = imgui_ini.c_str();
         }
         app.models = std::make_unique<pt::ModelCache>(vfs, app.scene, app.textures);
-        if (app.xr && !app.xr->StartSession(app.renderer.Context(), app.settings.vr.resolution_scale)) {
+        if (app.xr && !app.xr->StartSession(app.renderer.Context(), app.settings.vr.resolution_scale, app.settings.vr.space_warp > 0)) {
             pt::LogWarn("vr: off for this run: {}", app.xr->Error());
             app.xr->Shutdown();
             app.xr.reset();

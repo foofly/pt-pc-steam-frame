@@ -475,6 +475,10 @@ void SceneRenderer::DestroyPipelines() {
             *p = VK_NULL_HANDLE;
         }
     }
+    for (auto& [format, pipeline] : space_warp_pipelines_) {
+        if (pipeline) vkDestroyPipeline(device_, pipeline, nullptr);
+    }
+    space_warp_pipelines_.clear();
     DestroyUpscalePipelines();
 }
 

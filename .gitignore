@@ -6,6 +6,8 @@ extracted/
 build/
 Build/
 /dist/
+# test logs from playthroughs (pt.log copies)
+/logs/
 # subtitle translation packs (tools/subtitle_pack.py): translations of the game's script
 subtitles/*.txt
 /.deps/

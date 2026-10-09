@@ -62,6 +62,14 @@ public:
         XrTarget hud;
         VkExtent2D render{};
         xr::ViewPose poses[2];
+        /* XR_FB_space_warp: the eyes' acquired motion vector and depth images, the change of the app space since the last frame,
+           and whether the runtime should skip extrapolating this frame (a cut, a warp, the first frame) */
+        bool space_warp = false;
+        bool space_warp_skip = false;
+        XrTarget motion[2];
+        XrTarget depth[2];
+        glm::quat app_delta_orientation{1.0f, 0.0f, 0.0f, 0.0f};
+        glm::vec3 app_delta_position{0.0f};
     };
     bool PrepareStereo(Game& game, const Camera& logic, float dt, bool menu_open, Stereo& out);
     void FinishStereo(const Stereo& stereo);
@@ -92,6 +100,9 @@ private:
     float eye_height_ = -1.0f;
     glm::vec3 last_anchor_{0.0f};
     glm::vec3 last_correction_{0.0f};
+    bool app_space_valid_ = false;
+    glm::quat app_space_orientation_{1.0f, 0.0f, 0.0f, 0.0f};
+    glm::vec3 app_space_position_{0.0f};
     glm::uvec2 render_size_{0, 0};
     glm::uvec2 head_size_{0, 0};
     xr::EyeFrustum frusta_[2];

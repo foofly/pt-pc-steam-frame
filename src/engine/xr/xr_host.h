@@ -60,6 +60,14 @@ struct FrameLayers {
     glm::quat screen_orientation{1.0f, 0.0f, 0.0f, 0.0f};
     glm::vec3 screen_position{0.0f};
     glm::vec2 screen_size{3.2f, 1.8f};
+    /* XR_FB_space_warp (docs/vr.md): the eyes' motion vector and depth images (MotionSwapchain, DepthSwapchain) go with the
+       projection layer; app_delta is the change of the game's mapping of the tracking space into the world since the last
+       frame (the player walking or turning), skip asks the runtime not to extrapolate this frame (a cut or a warp) */
+    bool space_warp = false;
+    bool space_warp_skip = false;
+    glm::quat app_delta_orientation{1.0f, 0.0f, 0.0f, 0.0f};
+    glm::vec3 app_delta_position{0.0f};
+    float near_plane = 0.05f;
 };
 
 class Host final : public vk::ContextCreator {
@@ -78,7 +86,7 @@ public:
     VkPhysicalDevice PhysicalDevice(VkInstance instance) override;
     VkResult CreateDevice(VkPhysicalDevice physical, const VkDeviceCreateInfo& info, VkDevice& device) override;
 
-    bool StartSession(vk::Context& ctx, float scale);
+    bool StartSession(vk::Context& ctx, float scale, bool space_warp = false);
     void Shutdown();
 
     void PollEvents();
@@ -108,6 +116,10 @@ public:
     bool Acquire(Swapchain& swapchain);
     void Release(Swapchain& swapchain);
     VkExtent2D EyeExtent() const { return eye_swapchains_[0].extent; }
+    /* space warp: on when the runtime has XR_FB_space_warp and its swapchains were made (StartSession) */
+    bool SpaceWarp() const { return space_warp_; }
+    Swapchain& MotionSwapchain(int i) { return motion_swapchains_[i]; }
+    Swapchain& DepthSwapchain(int i) { return depth_swapchains_[i]; }
 
     uint64_t FramesSubmitted() const { return frames_submitted_; }
 
@@ -124,6 +136,11 @@ private:
     Swapchain eye_swapchains_[2];
     Swapchain hud_swapchain_;
     Swapchain screen_swapchain_;
+    bool space_warp_supported_ = false;
+    bool space_warp_ = false;
+    VkExtent2D motion_extent_{};
+    Swapchain motion_swapchains_[2];
+    Swapchain depth_swapchains_[2];
     int64_t display_time_ = 0;
     double display_period_ = 1.0 / 90.0;
     bool frame_open_ = false;

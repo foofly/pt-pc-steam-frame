@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <limits>
+#include <span>
 
 #include "engine/core/log.h"
 
@@ -38,7 +40,7 @@ VkPhysicalDevice Host::PhysicalDevice(VkInstance) { return VK_NULL_HANDLE; }
 VkResult Host::CreateDevice(VkPhysicalDevice physical, const VkDeviceCreateInfo& info, VkDevice& device) {
     return vkCreateDevice(physical, &info, nullptr, &device);
 }
-bool Host::StartSession(vk::Context&, float) { return false; }
+bool Host::StartSession(vk::Context&, float, bool) { return false; }
 void Host::Shutdown() {}
 void Host::PollEvents() {}
 bool Host::SessionRunning() const { return false; }
@@ -221,14 +223,27 @@ bool Host::Init(const std::string& application) {
         LogError("vr: {}", error_);
         return false;
     }
-    const char* extensions[] = {XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME};
+    // XR_FB_space_warp when the runtime lists it (the Steam Frame's SteamVR does); the session uses it if [vr] space_warp asks
+    PFN_xrEnumerateInstanceExtensionProperties enumerate_extensions = nullptr;
+    x.xrGetInstanceProcAddr(XR_NULL_HANDLE, "xrEnumerateInstanceExtensionProperties",
+                            reinterpret_cast<PFN_xrVoidFunction*>(&enumerate_extensions));
+    if (enumerate_extensions) {
+        uint32_t available_count = 0;
+        enumerate_extensions(nullptr, 0, &available_count, nullptr);
+        std::vector<XrExtensionProperties> available(available_count, {XR_TYPE_EXTENSION_PROPERTIES});
+        enumerate_extensions(nullptr, available_count, &available_count, available.data());
+        space_warp_supported_ = std::any_of(available.begin(), available.end(), [](const XrExtensionProperties& e) {
+            return std::strcmp(e.extensionName, XR_FB_SPACE_WARP_EXTENSION_NAME) == 0;
+        });
+    }
+    const char* extensions[] = {XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME, XR_FB_SPACE_WARP_EXTENSION_NAME};
     XrInstanceCreateInfo info{XR_TYPE_INSTANCE_CREATE_INFO};
     std::snprintf(info.applicationInfo.applicationName, sizeof(info.applicationInfo.applicationName), "%s", application.c_str());
     info.applicationInfo.applicationVersion = 1;
     std::snprintf(info.applicationInfo.engineName, sizeof(info.applicationInfo.engineName), "pt-port");
     info.applicationInfo.engineVersion = 1;
     info.applicationInfo.apiVersion = XR_API_VERSION_1_0;
-    info.enabledExtensionCount = 1;
+    info.enabledExtensionCount = space_warp_supported_ ? 2u : 1u;
     info.enabledExtensionNames = extensions;
     if (!x.Ok(x.xrCreateInstance(&info, &x.instance), "xrCreateInstance (is an OpenXR runtime installed and active?)", &error_)) {
         x.instance = XR_NULL_HANDLE;
@@ -257,7 +272,15 @@ bool Host::Init(const std::string& application) {
         return false;
     }
     XrSystemProperties system_properties{XR_TYPE_SYSTEM_PROPERTIES};
+    XrSystemSpaceWarpPropertiesFB space_warp_properties{XR_TYPE_SYSTEM_SPACE_WARP_PROPERTIES_FB};
+    if (space_warp_supported_) system_properties.next = &space_warp_properties;
     x.Ok(x.xrGetSystemProperties(x.instance, x.system, &system_properties), "xrGetSystemProperties");
+    if (space_warp_supported_) {
+        motion_extent_ = {space_warp_properties.recommendedMotionVectorImageRectWidth, space_warp_properties.recommendedMotionVectorImageRectHeight};
+        LogInfo("vr: runtime has XR_FB_space_warp (motion vectors {}x{})", motion_extent_.width, motion_extent_.height);
+    } else {
+        LogInfo("vr: runtime has no XR_FB_space_warp: space warp off");
+    }
     uint32_t count = 0;
     if (!x.Ok(x.xrEnumerateViewConfigurationViews(x.instance, x.system, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, 2, &count, x.views),
               "xrEnumerateViewConfigurationViews", &error_) ||
@@ -329,24 +352,30 @@ VkResult Host::CreateDevice(VkPhysicalDevice physical, const VkDeviceCreateInfo&
 
 namespace {
 
+/* sRGB 8-bit first: the eye images are sRGB encoded, and a UNORM swapchain would re-encode them and lose bits. */
+constexpr VkFormat kColourFormats[] = {VK_FORMAT_R8G8B8A8_SRGB, VK_FORMAT_B8G8R8A8_SRGB, VK_FORMAT_R16G16B16A16_SFLOAT,
+                                       VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_B8G8R8A8_UNORM};
+/* space warp (XR_FB_space_warp): signed 16-bit float motion vectors, and the depth formats the runtimes offer */
+constexpr VkFormat kMotionFormats[] = {VK_FORMAT_R16G16B16A16_SFLOAT};
+constexpr VkFormat kDepthFormats[] = {VK_FORMAT_D32_SFLOAT, VK_FORMAT_D24_UNORM_S8_UINT, VK_FORMAT_D16_UNORM, VK_FORMAT_D32_SFLOAT_S8_UINT};
+
 bool CreateSwapchain(Host::Impl& x, vk::Context& ctx, const std::vector<int64_t>& formats, uint32_t width, uint32_t height, Swapchain& out,
-                     const char* name) {
-    /* sRGB 8-bit first: the eye images are sRGB encoded, and a UNORM swapchain would re-encode them and lose bits. */
-    static constexpr VkFormat kPreferred[] = {VK_FORMAT_R8G8B8A8_SRGB, VK_FORMAT_B8G8R8A8_SRGB, VK_FORMAT_R16G16B16A16_SFLOAT,
-                                              VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_B8G8R8A8_UNORM};
+                     const char* name, std::span<const VkFormat> preferred = kColourFormats,
+                     XrSwapchainUsageFlags usage = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_SAMPLED_BIT,
+                     VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT) {
     VkFormat format = VK_FORMAT_UNDEFINED;
-    for (VkFormat f : kPreferred) {
+    for (VkFormat f : preferred) {
         if (std::find(formats.begin(), formats.end(), static_cast<int64_t>(f)) != formats.end()) {
             format = f;
             break;
         }
     }
     if (format == VK_FORMAT_UNDEFINED) {
-        LogError("vr: no supported swapchain colour format");
+        LogError("vr: no supported swapchain format for the {}", name);
         return false;
     }
     XrSwapchainCreateInfo info{XR_TYPE_SWAPCHAIN_CREATE_INFO};
-    info.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_SAMPLED_BIT;
+    info.usageFlags = usage;
     info.format = format;
     info.sampleCount = 1;
     info.width = width;
@@ -374,7 +403,7 @@ bool CreateSwapchain(Host::Impl& x, vk::Context& ctx, const std::vector<int64_t>
         view_info.image = image.image;
         view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
         view_info.format = format;
-        view_info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        view_info.subresourceRange = {aspect, 0, 1, 0, 1};
         VkImageView view = VK_NULL_HANDLE;
         vkCreateImageView(ctx.device, &view_info, nullptr, &view);
         out.images.push_back(image.image);
@@ -386,7 +415,7 @@ bool CreateSwapchain(Host::Impl& x, vk::Context& ctx, const std::vector<int64_t>
 
 }
 
-bool Host::StartSession(vk::Context& ctx, float scale) {
+bool Host::StartSession(vk::Context& ctx, float scale, bool space_warp) {
     Impl& x = *impl_;
     x.ctx = &ctx;
     XrGraphicsBindingVulkan2KHR binding{XR_TYPE_GRAPHICS_BINDING_VULKAN2_KHR};
@@ -531,6 +560,21 @@ bool Host::StartSession(vk::Context& ctx, float scale) {
         error_ = "cannot create the screen swapchains";
         return false;
     }
+    space_warp_ = false;
+    if (space_warp && space_warp_supported_ && motion_extent_.width >= 16 && motion_extent_.height >= 16) {
+        space_warp_ = true;
+        for (int eye = 0; eye < 2 && space_warp_; ++eye) {
+            space_warp_ = CreateSwapchain(x, ctx, formats, motion_extent_.width, motion_extent_.height, motion_swapchains_[eye],
+                                          eye == 0 ? "left motion vector" : "right motion vector", kMotionFormats) &&
+                          CreateSwapchain(x, ctx, formats, motion_extent_.width, motion_extent_.height, depth_swapchains_[eye],
+                                          eye == 0 ? "left space warp depth" : "right space warp depth", kDepthFormats,
+                                          XR_SWAPCHAIN_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_SAMPLED_BIT,
+                                          VK_IMAGE_ASPECT_DEPTH_BIT);
+        }
+        LogInfo("vr: space warp {}", space_warp_ ? "on" : "off: its swapchains could not be made");
+    } else if (space_warp_supported_) {
+        LogInfo("vr: space warp off ([vr] space_warp = 0)");
+    }
     LogInfo("vr: session created");
     return true;
 }
@@ -555,7 +599,8 @@ void Host::Shutdown() {
     if (x.ctx && x.ctx->device) {
         vkDeviceWaitIdle(x.ctx->device);
     }
-    for (Swapchain* sc : {&eye_swapchains_[0], &eye_swapchains_[1], &hud_swapchain_, &screen_swapchain_}) {
+    for (Swapchain* sc : {&eye_swapchains_[0], &eye_swapchains_[1], &hud_swapchain_, &screen_swapchain_, &motion_swapchains_[0],
+                          &motion_swapchains_[1], &depth_swapchains_[0], &depth_swapchains_[1]}) {
         for (VkImageView view : sc->views) {
             if (view && x.ctx) vkDestroyImageView(x.ctx->device, view, nullptr);
         }
@@ -806,6 +851,7 @@ void Host::EndFrame(const FrameLayers& layers) {
     XrCompositionLayerQuad screen{XR_TYPE_COMPOSITION_LAYER_QUAD};
     XrCompositionLayerQuad hud{XR_TYPE_COMPOSITION_LAYER_QUAD};
     std::vector<const XrCompositionLayerBaseHeader*> list;
+    XrCompositionLayerSpaceWarpInfoFB warps[2] = {{XR_TYPE_COMPOSITION_LAYER_SPACE_WARP_INFO_FB}, {XR_TYPE_COMPOSITION_LAYER_SPACE_WARP_INFO_FB}};
     if (should_render_ && layers.projection) {
         for (int i = 0; i < 2; ++i) {
             views[i].pose.orientation = ToXr(layers.eyes[i].orientation);
@@ -813,6 +859,23 @@ void Host::EndFrame(const FrameLayers& layers) {
             views[i].fov = {layers.eyes[i].angles.x, layers.eyes[i].angles.y, layers.eyes[i].angles.z, layers.eyes[i].angles.w};
             views[i].subImage.swapchain = reinterpret_cast<XrSwapchain>(eye_swapchains_[i].handle);
             views[i].subImage.imageRect = {{0, 0}, {static_cast<int32_t>(eye_swapchains_[i].extent.width), static_cast<int32_t>(eye_swapchains_[i].extent.height)}};
+            if (space_warp_ && layers.space_warp) {
+                /* the depth is the scene's reverse-Z to infinity: 0 is infinitely far and 1 the near plane (nearZ > farZ is reversed) */
+                XrCompositionLayerSpaceWarpInfoFB& w = warps[i];
+                w.layerFlags = layers.space_warp_skip ? XR_COMPOSITION_LAYER_SPACE_WARP_INFO_FRAME_SKIP_BIT_FB : 0;
+                const VkExtent2D e = motion_swapchains_[i].extent;
+                w.motionVectorSubImage.swapchain = reinterpret_cast<XrSwapchain>(motion_swapchains_[i].handle);
+                w.motionVectorSubImage.imageRect = {{0, 0}, {static_cast<int32_t>(e.width), static_cast<int32_t>(e.height)}};
+                w.depthSubImage.swapchain = reinterpret_cast<XrSwapchain>(depth_swapchains_[i].handle);
+                w.depthSubImage.imageRect = w.motionVectorSubImage.imageRect;
+                w.appSpaceDeltaPose.orientation = ToXr(glm::normalize(layers.app_delta_orientation));
+                w.appSpaceDeltaPose.position = ToXr(layers.app_delta_position);
+                w.minDepth = 0.0f;
+                w.maxDepth = 1.0f;
+                w.nearZ = std::numeric_limits<float>::infinity();
+                w.farZ = layers.near_plane;
+                views[i].next = &w;
+            }
         }
         projection.space = x.local;
         projection.viewCount = 2;

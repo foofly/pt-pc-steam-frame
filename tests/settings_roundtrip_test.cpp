@@ -113,6 +113,8 @@ int main(int argc, char** argv) {
         {"vr.snap_degrees", [](auto& s) { s.vr.snap_degrees = 45.0f; }},
         {"vr.smooth_speed", [](auto& s) { s.vr.smooth_speed = 120.0f; }},
         {"vr.resolution_scale", [](auto& s) { s.vr.resolution_scale = 0.8f; }},
+        {"vr.foveation", [](auto& s) { s.vr.foveation = 2; }},
+        {"vr.space_warp", [](auto& s) { s.vr.space_warp = 0; }},
     };
     for (const auto& [name, change] : changes) {
         pt::AppSettings s;
