@@ -88,6 +88,7 @@ private:
     bool menu_was_open_ = false;
     float hud_yaw_ = 0.0f;
     glm::vec3 hud_position_{0.0f};
+    glm::vec3 hud_anchor_{0.0f};
     float eye_height_ = -1.0f;
     glm::vec3 last_anchor_{0.0f};
     glm::vec3 last_correction_{0.0f};

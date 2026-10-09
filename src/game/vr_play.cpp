@@ -295,19 +295,26 @@ void VrPlay::Rumble(uint8_t large_motor, uint8_t small_motor) {
     host_.Haptic(1, amplitude, 0.05f);
 }
 
+/* The HUD quad is composited by the runtime at the headset's rate from the pose given here, which changes only at the game's
+   frame rate: a panel that follows the head steps at that rate and doubles under reprojection when the game runs slower
+   than the display (the Steam Frame at 18 fps). An open menu therefore stays where it opened, fixed in the room; without a
+   menu the subtitles and prompts follow the head, the position eased as the direction already was. */
 void VrPlay::Place(const glm::vec3& head_local, float head_yaw_local, bool menu_open, float dt) {
+    const float ease = std::min(1.0f, std::max(dt, 0.0f) * 3.0f);
     if (!hud_placed_ || (menu_open && !menu_was_open_)) {
         hud_yaw_ = head_yaw_local;
+        hud_anchor_ = head_local;
         hud_placed_ = true;
-    } else {
+    } else if (!menu_open) {
         const float d = xr::WrapAngle(head_yaw_local - hud_yaw_);
         if (std::abs(d) > kHudDeadZone) {
             const float beyond = d - std::copysign(kHudDeadZone, d);
-            hud_yaw_ = xr::WrapAngle(hud_yaw_ + beyond * std::min(1.0f, std::max(dt, 0.0f) * 3.0f));
+            hud_yaw_ = xr::WrapAngle(hud_yaw_ + beyond * ease);
         }
+        hud_anchor_ += (head_local - hud_anchor_) * ease;
     }
     menu_was_open_ = menu_open;
-    hud_position_ = head_local + xr::YawRotation(hud_yaw_) * glm::vec3(0.0f, -kHudDrop, -kHudDistance);
+    hud_position_ = hud_anchor_ + xr::YawRotation(hud_yaw_) * glm::vec3(0.0f, -kHudDrop, -kHudDistance);
 }
 
 }
