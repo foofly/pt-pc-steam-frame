@@ -12,7 +12,7 @@ namespace pt::localized {
 namespace {
 
 constexpr int kFirst = 7;
-constexpr const char* kCodes[] = {"Tur", "Zhs", "Ara", "Rus", "Ukr"};
+constexpr const char* kCodes[] = {"Tur", "Zhs", "Ara", "Rus", "Ukr", "Ces"};
 
 std::vector<SubtitleTranslation> LoadPack(const char* code) {
     std::vector<SubtitleTranslation> out;

@@ -6,7 +6,8 @@ flat or in the port's VR mode through SteamVR's OpenXR runtime: no PC, no stream
 
 The port itself, its game logic, renderer, tools and documentation, is LoreanXavier's work. If it is worth something to
 you, support them on Patreon: [patreon.com/loreanxavier](https://patreon.com/loreanxavier). This fork only adds what the
-ARM64 and Steam Frame build needs (see [Changes from upstream](#changes-from-upstream)).
+ARM64 and Steam Frame build needs (see [Changes from upstream](#changes-from-upstream)). It follows upstream: this
+version is based on upstream 1.0.2.
 
 There is no game data in this repository or in its releases. Every level, model, texture, sound, script and cutscene is
 read at run time from your own copy of the PS4 game.
@@ -74,7 +75,7 @@ default, next to the save and the log (`pt.log`). Then edit `pt.ini` (in Desktop
 
     [voice]
     ; one part of the game waits for a spoken word, and voice recognition does not work on ARM64 yet (Caveats):
-    ; this key stands in for it
+    ; this key stands in for it (the same as PC settings > Sound > "Assign J for the microphone trigger")
     key = "J"
 
     [vr]
@@ -82,10 +83,14 @@ default, next to the save and the log (`pt.log`). Then edit `pt.ini` (in Desktop
     enabled = 1
     ; the eye images against SteamVR's recommended size, 0.5 to 2: above 1 sharpens and smooths edges, costs frame rate
     resolution_scale = 1.0
+    ; metres up (+) or down (-) for your viewpoint, -0.5 to 0.5; the player in the game stays where they are
+    height_offset = 0
+    ; how far your tracked head and hands move the view, 0.5 to 2; above 1 the world feels smaller
+    world_scale = 1
 
 The rest of `[vr]` (`turn` snap or smooth, `snap_degrees`, `smooth_speed`, `flashlight` on the head or a controller,
-`flashlight_hand`) is described in the file and in [docs/vr.md](docs/vr.md); the Extras > VR page of the in-game PC
-settings changes the flashlight and turning while playing.
+`flashlight_hand`) is described in the file and in [docs/vr.md](docs/vr.md). The Extras > VR page of the in-game PC
+settings changes the flashlight, turning, Height adjustment and World scale while playing.
 
 The graphics preset is not in `pt.ini` as one value: pick Low or Original (PS4) in the in-game PC settings > Graphics,
 with ray tracing off, and raise things while the frame rate holds.
@@ -95,7 +100,7 @@ with ray tracing off, and raise things while the frame rate holds.
 
 ### Translated subtitles (optional)
 
-The subtitles the port added for Turkish, Simplified Chinese, Arabic, Russian and Ukrainian translate the game's
+The subtitles the port added for Turkish, Simplified Chinese, Arabic, Russian, Ukrainian and Czech translate the game's
 script, so this fork does not carry them. With a checkout of the upstream repository:
 
     python3 tools/subtitle_pack.py <upstream pt-pc checkout> ~/Games/pt-steamframe
@@ -118,12 +123,15 @@ VR
 - Each eye is a full render with its own shadows, reflections and post-processing, about four times the work of the
   flat game, on a mobile GPU. Ray tracing and the higher presets are not realistic in VR.
 - The controllers go through SteamVR's mapping of the Index and Touch bindings; the port has no Steam Frame controller
-  profile. The comfort settings (eye height, turn speed, HUD distance) were chosen without tests with people.
+  profile. The comfort settings (eye height, turn speed, HUD distance) were chosen without tests with people; Height
+  adjustment and World scale (step 4) can correct the first two, but are new in upstream 1.0.2 and untested on a headset.
 - Cutscenes and the peephole play on a flat virtual screen, by design (docs/vr.md).
 
 Missing on ARM64
 - **Voice recognition does not work yet**: no ARM build of whisper's CPU code is shipped, so the game cannot hear the
-  word it waits for in one part of the game. Put `key = "J"` under `[voice]` in `pt.ini` (step 4) and the J key stands in for it.
+  word it waits for in one part of the game. Turn on PC settings > Sound > "Assign J for the microphone trigger" (or
+  `key = "J"` under `[voice]` in `pt.ini`, step 4) and the J key stands in for it. Upstream says both controller
+  triggers count too; whether that works with the headset's controllers in VR is not checked.
 - **Enhanced textures do not work**: the Real-ESRGAN tool the port uses only exists for x86-64.
 - **No upscalers or frame generation**: FSR, DLSS and XeSS are Windows-only SDKs (also on the upstream Linux build),
   and the VR mode turns them off anyway.
@@ -163,18 +171,18 @@ Windows and x86-64 Linux build as upstream describes: see the
 
 ## Changes from upstream
 
-- ARM64: the audio mixer's flush-to-zero setting has an ARM64 path (`src/engine/audio/sound_engine.cpp`); it was
-  x86-only.
 - VR on Linux: `cmake/OpenXR.cmake` builds the Khronos OpenXR loader 1.1.63 from source on Linux, ships it next to `pt`
   as `libopenxr_loader.so.1` (found through the executable's `$ORIGIN` RUNPATH) and fixes the headless test runtime's
   manifest. `-DPT_OPENXR=ON` turns it on; Windows is unchanged.
-- Arabic on Linux: the font lookup now knows the bundled Noto Kufi and Noto Naskh Arabic fonts; the Arabic interface
-  failed to load on every Linux build before.
-- No copyrighted material: the added languages' translated subtitles moved out of the source into optional packs
-  (`tools/subtitle_pack.py`, `src/engine/core/subtitle_translations.cpp`), and the README's gameplay GIF is gone.
+- No copyrighted material: the added languages' translated subtitles (Czech included) moved out of the source into
+  optional packs (`tools/subtitle_pack.py`, `src/engine/core/subtitle_translations.cpp`), the README's gameplay GIF is
+  gone, and `assets/pt.ico` stays upstream's earlier plain "P.T." text icon instead of the game's title art.
 - `tools/prepare_game.py`: unpacks the game files from a PKG or dump into the folder with `pt`, with the upstream
   extraction helper or Linux setup.
-- The GitHub Actions release workflow.
+- The GitHub Actions release workflow. Upstream's macOS workflow is kept in the tree but disabled in this repository.
+
+Upstream 1.0.2 has its own ARM64 flush-to-zero path (for Apple silicon) and the Linux Arabic font fix that earlier
+versions of this fork carried.
 
 Everything else (the features, the settings, the mods, the Museum, the speedrun timer, the PC controls) is the upstream
 port's; its README and docs/ describe them.
@@ -192,6 +200,16 @@ The port is built on SDL3, Vulkan (volk, VMA), glm, Dear ImGui, stb, Lua 5.1, li
 OpenAI's Whisper model and the Silero VAD for the voice part, Real-ESRGAN with ncnn for the enhanced textures, the
 Khronos OpenXR loader for VR, HarfBuzz on Linux and the Noto fonts for the added languages, and LibOrbisPkg in the
 upstream installer's extraction helper. Their notices ship in `licenses/` next to the executable.
+
+## AI Disclosure
+
+Upstream's statement: "AI coding tools were used in developing and debugging this port. My focus has been on matching
+the original P.T.: comparing builds with PS4 references, identifying discrepancies, testing gameplay and prioritizing
+fixes. The project uses the original game assets from the player's own PS4 copy. Optional enhanced textures use
+machine-learning upscaling on existing textures."
+
+This fork's changes (the ARM64 and Steam Frame build, VR on Linux, the release workflow, the tools and this README)
+were also made with an AI coding assistant, and tested by hand on a Steam Frame.
 
 ## License
 

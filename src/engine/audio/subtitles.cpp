@@ -61,7 +61,7 @@ uint64_t SubtitleTable::MarkerKey(std::string_view label) {
 
 bool SubtitleTable::Load(Vfs& vfs, std::string_view language, std::span<const std::vector<uint8_t>> sab_tables, std::string* error) {
     const std::string lang = NormalizeLanguage(language);
-    std::string source = (lang == "Tur" || lang == "Zhs" || lang == "Ara" || lang == "Rus" || lang == "Ukr") ? "Eng" : lang;
+    std::string source = (lang == "Tur" || lang == "Zhs" || lang == "Ara" || lang == "Rus" || lang == "Ukr" || lang == "Ces") ? "Eng" : lang;
     if (source != "Eng" && !vfs.Archive().Contains(Vfs::ToArchivePath(PackagePath(source)))) {
         LogWarn("subtitles: {} missing, falling back to English", PackagePath(source));
         source = "Eng";
@@ -82,7 +82,7 @@ bool SubtitleTable::Load(Vfs& vfs, std::string_view language, std::span<const st
     if (!Parse(*subp, sab_tables, error)) {
         return false;
     }
-    const int translation_language = lang == "Tur" ? 7 : lang == "Zhs" ? 8 : lang == "Ara" ? 9 : lang == "Rus" ? 10 : lang == "Ukr" ? 11 : 0;
+    const int translation_language = lang == "Tur" ? 7 : lang == "Zhs" ? 8 : lang == "Ara" ? 9 : lang == "Rus" ? 10 : lang == "Ukr" ? 11 : lang == "Ces" ? 12 : 0;
     // the translation pack (subtitles/<code>.txt, tools/subtitle_pack.py); without it the subtitles stay English
     const auto& translations = localized::SubtitleTranslations(translation_language);
     if (!translations.empty()) {

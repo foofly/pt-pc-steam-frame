@@ -1,9 +1,9 @@
 """Writes the subtitle translation packs (subtitles/<code>.txt next to pt) from an upstream pt-pc checkout.
 
-The Turkish, Chinese, Arabic, Russian and Ukrainian subtitles are translations of the game's script, so this fork does not
+The Turkish, Chinese, Arabic, Russian, Ukrainian and Czech subtitles are translations of the game's script, so this fork does not
 carry them; the game reads them at run time from subtitles/<code>.txt (src/engine/core/subtitle_translations.cpp) and
 shows the English subtitles for a language without its pack. The translations come from the kSubtitles tables of
-src/engine/core/<language>_text.h in LoreanXavier/pt-pc (any checkout up to the fork point):
+src/engine/core/<language>_text.h in LoreanXavier/pt-pc (any checkout; Czech from 1.0.2 on):
 
     python tools/subtitle_pack.py <upstream pt-pc checkout> <folder with pt>
 
@@ -13,7 +13,7 @@ Pack format: UTF-8, one subtitle line per text line, "<key as 8 hex digits><tab>
 import re, sys
 from pathlib import Path
 
-LANGUAGES = {"turkish": "Tur", "chinese": "Zhs", "arabic": "Ara", "russian": "Rus", "ukrainian": "Ukr"}
+LANGUAGES = {"turkish": "Tur", "chinese": "Zhs", "arabic": "Ara", "russian": "Rus", "ukrainian": "Ukr", "czech": "Ces"}
 
 
 def entries(header):
