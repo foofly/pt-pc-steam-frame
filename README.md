@@ -69,9 +69,11 @@ To check it from a terminal first: `cd ~/Games/pt-steamframe && chmod +x pt && .
 
 ### 4. First start and `pt.ini`
 
-Start the game once and quit: the first start writes `~/.local/share/pt-port/pt/pt.ini` with every setting at its
-default, next to the save and the log (`pt.log`). Then edit `pt.ini` (in Desktop Mode, with any text editor, or
-`nano ~/.local/share/pt-port/pt/pt.ini` in a terminal) while the game is closed:
+Start the game once and quit: the first start writes `data/pt.ini` in the game's folder
+(`~/Games/pt-steamframe/data/pt.ini`) with every setting at its default, next to the save (`PT_Save_Data.sav`) and the
+log (`pt.log`). Since 1.0.2 everything the game writes stays in that `data/` folder; a first start of 1.0.2 copies the
+settings and save of older versions from `~/.local/share/pt-port/pt/` into it. Then edit `pt.ini` (in Desktop Mode,
+with any text editor, or `nano ~/Games/pt-steamframe/data/pt.ini` in a terminal) while the game is closed:
 
     [voice]
     ; one part of the game waits for a spoken word, and voice recognition does not work on ARM64 yet (Caveats):
@@ -95,7 +97,7 @@ settings changes the flashlight, turning, Height adjustment and World scale whil
 The graphics preset is not in `pt.ini` as one value: pick Low or Original (PS4) in the in-game PC settings > Graphics,
 with ray tracing off, and raise things while the frame rate holds.
 
-`grep vr: ~/.local/share/pt-port/pt/pt.log` shows what the VR mode did, and why when it fell back to flat;
+`grep vr: ~/Games/pt-steamframe/data/pt.log` shows what the VR mode did, and why when it fell back to flat;
 `vr: eyes drawn at ...` gives the per-eye resolution.
 
 ### Translated subtitles (optional)
