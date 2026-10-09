@@ -391,6 +391,8 @@ bool SceneRenderer::CreatePipelines() {
     tonemap_ = CreateGraphicsPipeline(device_, post);
     post.fragment = "fxaa.frag";
     fxaa_ = CreateGraphicsPipeline(device_, post);
+    post.fragment = "taa.frag";
+    taa_ = CreateGraphicsPipeline(device_, post);
     post.colors = {kHdrFormat};
     post.fragment = "mirror_temporal.frag";
     mirror_temporal_pipeline_ = CreateGraphicsPipeline(device_, post);
@@ -465,7 +467,7 @@ bool SceneRenderer::CreatePipelines() {
 void SceneRenderer::DestroyPipelines() {
     VkPipeline* all[] = {&gbuffer_, &decal_, &shadow_pipeline_, &probe_, &probe_resolve_, &light_, &compose_, &probe_resolve_fdm_, &light_fdm_,
                          &compose_fdm_, &forward_, &forward_emissive_, &luminance_, &bright_,
-                         &reflect_colour_, &kawase_, &bloom_add_, &kawase_sum_, &gaussian_, &tonemap_, &fxaa_, &dof_ratio_, &dof_down_, &dof_blur_, &dof_blend_,
+                         &reflect_colour_, &kawase_, &bloom_add_, &kawase_sum_, &gaussian_, &tonemap_, &fxaa_, &taa_, &dof_ratio_, &dof_down_, &dof_blur_, &dof_blend_,
                          &mb_velocity_, &mb_tile_pipeline_, &mb_bake_pipeline_, &mb_mcguire_, &mb_composite_, &velocity_pipeline_, &fsblur_,
                          &banding_, &screen_fx_, &debug_, &occlusion_, &occlusion_blur_, &reflect_make_, &reflect_blend_, &vfx_composite_,
                          &mirror_temporal_pipeline_, &reflect_layer_pipeline_, &reflect_temporal_pipeline_};
@@ -606,7 +608,7 @@ void SceneRenderer::DestroyTargets() {
                                &dof_quarter_[0], &dof_quarter_[1], &dof_eighth_[0], &dof_eighth_[1], &velocity_, &object_velocity_,
                                &mb_tile_[0], &mb_tile_[1], &mb_tile_[2], &mb_tile_[3], &mb_tile_[4], &mb_neighbour_, &mb_bake_,
                                &mb_blur_[0], &mb_blur_[1], &mirror_history_, &mirror_temporal_, &reflect_layer_, &reflect_offset_,
-                               &reflect_history_[0], &reflect_history_[1]};
+                               &reflect_history_[0], &reflect_history_[1], &taa_history_[0], &taa_history_[1]};
     for (RenderTarget* t : targets) {
         ctx.DestroyImage(t->image);
         *t = RenderTarget{};
@@ -619,6 +621,7 @@ void SceneRenderer::DestroyTargets() {
         t = RenderTarget{};
     }
     rt_ao_history_ = false;
+    taa_valid_[0] = taa_valid_[1] = false;
     mirror_history_valid_ = false;
     mirror_history_size_ = 0;
     reflect_history_valid_ = false;
@@ -660,6 +663,8 @@ bool SceneRenderer::EnsureTargets(VkExtent2D extent, VkExtent2D output, bool ups
               CreateTarget(ldr_[0], ldr_format_, output, color | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, c) &&
               CreateTarget(ldr_[1], ldr_format_, output, color | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, c) &&
               CreateTarget(history_, ldr_format_, output, color | VK_IMAGE_USAGE_TRANSFER_DST_BIT, c) &&
+              (vr_antialiasing_ <= 0 || (CreateTarget(taa_history_[0], ldr_format_, output, color | VK_IMAGE_USAGE_TRANSFER_DST_BIT, c) &&
+                                         CreateTarget(taa_history_[1], ldr_format_, output, color | VK_IMAGE_USAGE_TRANSFER_DST_BIT, c))) &&
               CreateTarget(ao_[0], kAoFormat, extent, color, c) && CreateTarget(ao_[1], kAoFormat, extent, color | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, c);
     const VkExtent2D shift1{std::max(output.width >> 1, 1u), std::max(output.height >> 1, 1u)};
     const VkExtent2D shift2{std::max(output.width >> 2, 1u), std::max(output.height >> 2, 1u)};
@@ -765,6 +770,8 @@ void SceneRenderer::WriteImageDescriptors() {
     set_target(gpu::kImgLdrA, ldr_[0]);
     set_target(gpu::kImgLdrB, ldr_[1]);
     set_target(gpu::kImgHistory, history_);
+    set_target(gpu::kImgTaaHistoryL, taa_history_[0]);
+    set_target(gpu::kImgTaaHistoryR, taa_history_[1]);
     set_target(gpu::kImgDofHalf, dof_half_);
     set_target(gpu::kImgDofQuarterA, dof_quarter_[0]);
     set_target(gpu::kImgDofQuarterB, dof_quarter_[1]);

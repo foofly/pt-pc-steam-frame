@@ -1255,7 +1255,6 @@ void SceneRenderer::RecordSpaceWarp(VkCommandBuffer cmd) {
     }
     if (!pipeline) return;
     const int eye = vr_eye_;
-    const gpu::View& view = frame_->views[main_view_.index];
     BeginLabel(cmd, "space warp");
     UseTargets(cmd, {{&depth_, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL}});
     const bool stencil = target->depth_format == VK_FORMAT_D24_UNORM_S8_UINT || target->depth_format == VK_FORMAT_D32_SFLOAT_S8_UINT;
@@ -1288,13 +1287,14 @@ void SceneRenderer::RecordSpaceWarp(VkCommandBuffer cmd) {
     BindSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS);
     gpu::PassPush push;
     push.ids = glm::uvec4(0, 0, 0, main_view_.index);
-    push.f0 = glm::vec4(1.0f / static_cast<float>(target->extent.width), 1.0f / static_cast<float>(target->extent.height), 0.0f, 0.0f);
+    // unjittered positions (TAA's jitter would be a pixel of noise in the motion)
+    push.f0 = glm::vec4(1.0f / static_cast<float>(target->extent.width), 1.0f / static_cast<float>(target->extent.height), taa_jitter_);
     // without a previous frame of this eye (the first, or after a cut) the previous view-projection is this one: no motion
-    push.m = space_warp_history_[eye] ? space_warp_previous_[eye] : view.view_projection;
+    push.m = space_warp_history_[eye] ? space_warp_previous_[eye] : unjittered_view_projection_;
     Fullscreen(cmd, pipeline, push);
     vkCmdEndRendering(cmd);
     EndLabel(cmd);
-    space_warp_previous_[eye] = view.view_projection;
+    space_warp_previous_[eye] = unjittered_view_projection_;
     space_warp_history_[eye] = true;
 }
 
@@ -2430,7 +2430,31 @@ void SceneRenderer::Render(const Camera& camera, const std::vector<DrawItem>& it
     Render(camera, items, fallback_, 1.0f / 60.0f);
 }
 
-void SceneRenderer::Render(const Camera& camera, const std::vector<DrawItem>& items, const SceneLighting& lighting, float dt) {
+void SceneRenderer::Render(const Camera& view_camera, const std::vector<DrawItem>& items, const SceneLighting& lighting, float dt) {
+    /* VR temporal anti-aliasing (taa.frag): a sub-pixel jitter a frame, Halton (2, 3) over 8 frames and the same for both eyes,
+       carried like the eye's projection offset; the unjittered view-projection is what the eyes' histories and space warp
+       reproject with */
+    Camera camera = view_camera;
+    taa_jitter_ = glm::vec2(0.0f);
+    {
+        const VkExtent2D out = renderer_->RenderExtent();
+        const float aspect = static_cast<float>(out.width) / static_cast<float>(std::max(out.height, 1u));
+        unjittered_view_projection_ = view_camera.Projection(aspect) * view_camera.View();
+        if (TaaActive() && out.width > 0 && out.height > 0) {
+            auto halton = [](uint32_t i, uint32_t base) {
+                float f = 1.0f, r = 0.0f;
+                for (; i > 0; i /= base) {
+                    f /= static_cast<float>(base);
+                    r += f * static_cast<float>(i % base);
+                }
+                return r;
+            };
+            const uint32_t phase = (frame_counter_ & 7u) + 1u;
+            const glm::vec2 pixels(halton(phase, 2) - 0.5f, halton(phase, 3) - 0.5f);
+            taa_jitter_ = pixels * glm::vec2(2.0f / static_cast<float>(out.width), 2.0f / static_cast<float>(out.height));
+            camera.projection_offset += taa_jitter_;
+        }
+    }
     const auto cpu_start = std::chrono::steady_clock::now();
     struct ToggleGuard {
         RenderToggles& toggles;

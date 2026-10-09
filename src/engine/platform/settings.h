@@ -95,6 +95,7 @@ struct AppSettings {
         float world_scale = 1.0f;
         int foveation = 1;
         int space_warp = 1;
+        int antialiasing = 1;
         bool operator==(const Vr&) const = default;
     } vr;
     std::map<std::string, bool> mods;

@@ -220,8 +220,10 @@ public:
     };
     void SetSpaceWarpTarget(const SpaceWarpTarget* target, bool reset) {
         space_warp_target_ = target;
-        if (reset) space_warp_history_[0] = space_warp_history_[1] = false;
+        if (reset) space_warp_history_[0] = space_warp_history_[1] = taa_valid_[0] = taa_valid_[1] = false;
     }
+    /* VR anti-aliasing (docs/vr.md): 0 the original FXAA, 1 temporal anti-aliasing with each eye's own history (taa.frag) */
+    void SetVrAntialiasing(int mode) { vr_antialiasing_ = mode; }
 
 private:
     struct FrameSlot {
@@ -472,6 +474,7 @@ private:
     VkPipeline gaussian_ = VK_NULL_HANDLE;
     VkPipeline tonemap_ = VK_NULL_HANDLE;
     VkPipeline fxaa_ = VK_NULL_HANDLE;
+    VkPipeline taa_ = VK_NULL_HANDLE;
     VkPipeline mirror_temporal_pipeline_ = VK_NULL_HANDLE;
     VkPipeline dof_ratio_ = VK_NULL_HANDLE;
     VkPipeline dof_down_ = VK_NULL_HANDLE;
@@ -535,6 +538,16 @@ private:
     bool space_warp_history_[2]{};
     std::vector<std::pair<VkFormat, VkPipeline>> space_warp_pipelines_;
     void RecordSpaceWarp(VkCommandBuffer cmd);
+    /* VR temporal anti-aliasing: the eyes' histories, whether each holds a frame, the eyes' previous unjittered view-projections,
+       this frame's jitter (NDC) and unjittered view-projection */
+    int vr_antialiasing_ = 0;
+    RenderTarget taa_history_[2];
+    bool taa_valid_[2]{};
+    glm::mat4 taa_previous_[2]{glm::mat4(1.0f), glm::mat4(1.0f)};
+    glm::vec2 taa_jitter_{0.0f};
+    glm::mat4 unjittered_view_projection_{1.0f};
+    bool TaaActive() const { return vr_antialiasing_ > 0 && vr_eye_ >= 0 && vr_eye_ <= 1 && !up_.enabled && taa_history_[vr_eye_].Valid(); }
+    void RecordTaa(VkCommandBuffer cmd, int& current);
     int foveation_ = 0;
     VkImageView FoveationMap(const ViewSetup& view);
     void DestroyDensityMaps();

@@ -35,7 +35,7 @@ void main() {
     }
     vec2 ndc = (vec2(texel) + 0.5) * v.viewport.zw * 2.0 - 1.0;
     vec2 scaled = (ndc - v.jitter.xy) * v.projection_param.xy;
-    vec3 current = vec3(ndc, depth);
+    vec3 current = vec3(ndc - pass.f0.zw, depth);  // f0.zw: the TAA jitter, so that the motion is the unjittered one
     vec4 previous;
     if (depth > 0.0) {
         float z = ViewZ(v, depth);

@@ -115,6 +115,7 @@ int main(int argc, char** argv) {
         {"vr.resolution_scale", [](auto& s) { s.vr.resolution_scale = 0.8f; }},
         {"vr.foveation", [](auto& s) { s.vr.foveation = 2; }},
         {"vr.space_warp", [](auto& s) { s.vr.space_warp = 0; }},
+        {"vr.antialiasing", [](auto& s) { s.vr.antialiasing = 0; }},
     };
     for (const auto& [name, change] : changes) {
         pt::AppSettings s;

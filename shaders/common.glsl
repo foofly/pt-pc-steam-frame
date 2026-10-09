@@ -70,7 +70,7 @@ layout(std430, set = 1, binding = 1) readonly buffer SkinData {
     mat4 skin[];
 };
 
-layout(set = 1, binding = 2) uniform texture2D images[56];
+layout(set = 1, binding = 2) uniform texture2D images[58];
 layout(set = 1, binding = 3) uniform sampler samplers[5];
 layout(set = 1, binding = 4) uniform texture3D lut2_image;
 
@@ -86,6 +86,8 @@ layout(set = 1, binding = 4) uniform texture3D lut2_image;
 #define IMG_LDR_A 9
 #define IMG_LDR_B 10
 #define IMG_HISTORY 11
+#define IMG_TAA_HISTORY_L 56
+#define IMG_TAA_HISTORY_R 57
 #define IMG_DOF_HALF 12
 #define IMG_DOF_QUARTER_A 13
 #define IMG_MIRROR 14

@@ -4907,6 +4907,7 @@ int main(int argc, char** argv) {
     }
     if (renderer_ready && app.textures.Init(app.renderer.Context()) && app.scene.Init(app.renderer, app.textures)) {
         if (app.xr) app.scene.SetVrFoveation(app.renderer.Context().fragment_density_map ? app.settings.vr.foveation : 0);
+        if (app.xr) app.scene.SetVrAntialiasing(app.settings.vr.antialiasing);
         app.textures.SetAnisotropy(AnisotropyFromApp(app.settings));
         app.vfs = &vfs;
         app.texture_runtime = pt::ExecutableDir() / "texture-tools";

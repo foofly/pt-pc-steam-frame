@@ -22,6 +22,37 @@ glm::vec4 BloomPolynomial(float extraction) {
 
 }
 
+/* VR temporal anti-aliasing (taa.frag, docs/vr.md): the tonemapped eye blended into the eye's own history, which then takes the
+   result; in place of FXAA */
+void SceneRenderer::RecordTaa(VkCommandBuffer cmd, int& current) {
+    const int eye = vr_eye_;
+    RenderTarget& history = taa_history_[eye];
+    RenderTarget& src = ldr_[current];
+    RenderTarget& dst = ldr_[1 - current];
+    BeginLabel(cmd, "temporal anti-aliasing");
+    UseTargets(cmd, {{&src, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}, {&dst, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
+                     {&history, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}, {&depth_, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL}});
+    BeginPass(cmd, output_extent_, {{&dst, false, {}}});
+    gpu::PassPush push;
+    push.ids = glm::uvec4(current == 0 ? gpu::kImgLdrA : gpu::kImgLdrB, eye == 0 ? gpu::kImgTaaHistoryL : gpu::kImgTaaHistoryR,
+                          taa_valid_[eye] ? 1u : 0u, main_view_.index);
+    push.f0 = glm::vec4(taa_jitter_, 0.1f, 0.0f);
+    push.m = taa_previous_[eye];
+    Fullscreen(cmd, taa_, push);
+    vkCmdEndRendering(cmd);
+    UseTargets(cmd, {{&dst, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL}, {&history, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL}});
+    VkImageCopy copy{};
+    copy.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    copy.dstSubresource = copy.srcSubresource;
+    copy.extent = {output_extent_.width, output_extent_.height, 1};
+    vkCmdCopyImage(cmd, dst.image.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, history.image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+    UseTargets(cmd, {{&dst, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}, {&history, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
+    EndLabel(cmd);
+    taa_previous_[eye] = unjittered_view_projection_;
+    taa_valid_[eye] = true;
+    current = 1 - current;
+}
+
 void SceneRenderer::CopyToHistory(VkCommandBuffer cmd, const RenderTarget& source) {
     VkImageCopy copy{};
     copy.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
@@ -175,7 +206,9 @@ void SceneRenderer::RecordPost(VkCommandBuffer cmd, const SceneLighting& lightin
         current = 1 - current;
     };
 
-    if (toggles.fxaa && !up_.enabled && !native_aa_order) {
+    if (TaaActive() && taa_) {
+        RecordTaa(cmd, current);
+    } else if (toggles.fxaa && !up_.enabled && !native_aa_order) {
         push.ids.x = ldr_index(current);
         run(fxaa_, push);
     }

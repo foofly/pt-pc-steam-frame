@@ -10,7 +10,7 @@ constexpr uint32_t kMaxViews = 64;
 constexpr uint32_t kMaxLights = 256;
 constexpr uint32_t kMaxProbes = 512;
 constexpr uint32_t kMaxSkinMatrices = 16384;
-constexpr uint32_t kImageSlots = 56;
+constexpr uint32_t kImageSlots = 58;
 constexpr uint32_t kInvalid = 0xFFFFFFFFu;
 constexpr uint32_t kLuminanceGroups = 16384;
 constexpr uint32_t kReflectionReadback = kLuminanceGroups;
@@ -131,6 +131,9 @@ enum Image : uint32_t {
     kImgReflectHistoryB = 53,
     kImgProbeAcc = 54,
     kImgHandyFactor = 55,
+    /* the VR eyes' temporal anti-aliasing histories (taa.frag) */
+    kImgTaaHistoryL = 56,
+    kImgTaaHistoryR = 57,
 };
 
 enum Sampler : uint32_t {
